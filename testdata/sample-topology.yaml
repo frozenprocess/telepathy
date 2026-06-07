@@ -1,0 +1,37 @@
+# Sample input for `make test`: a tiny 3-pod topology in one namespace.
+#
+# Piped to calico-engine on stdin as the evaluation Request (topology +
+# probe). The accompanying NetworkPolicy is layered in via `-policy`
+# (see the Makefile `test` target), so this file stays pure topology.
+#
+# Probe: TCP/8080. Expected matrix highlights:
+#   demo/frontend -> demo/backend   allow  (policy permits app=frontend)
+#   demo/attacker -> demo/backend   deny   (policy permits only app=frontend)
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+
+endpoints:
+  - id: demo/frontend
+    namespace: demo
+    name: frontend
+    ip: 10.0.0.1
+    labels: { app: frontend }
+    ports:
+      - { name: http, port: 8080, protocol: tcp }
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.2
+    labels: { app: backend }
+    ports:
+      - { name: http, port: 8080, protocol: tcp }
+  - id: demo/attacker
+    namespace: demo
+    name: attacker
+    ip: 10.0.0.3
+    labels: { app: attacker }
+
+port: 8080
+protocol: tcp

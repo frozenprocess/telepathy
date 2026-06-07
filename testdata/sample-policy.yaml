@@ -1,0 +1,24 @@
+# Sample policy for `make test`, layered onto sample-topology.yaml via -policy.
+#
+# Selects the backend pod and permits ingress only from the frontend pod, so
+# the evaluated matrix shows frontend->backend allowed and attacker->backend
+# denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - protocol: TCP
+          port: 8080
