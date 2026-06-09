@@ -1,0 +1,16 @@
+# Keep the build context small and deterministic: the Calico checkout, the Go
+# workspace files, and prior build artifacts are all (re)generated inside the
+# image build, so they must not leak in from the host.
+/third_party
+/go.work
+/go.work.sum
+/bin
+
+# .git is large and not needed in the image; version metadata is passed in via
+# --build-arg by `make image` instead.
+.git
+
+# Repo docs / images that aren't part of the build.
+/assets
+README.MD
+LICENSE
