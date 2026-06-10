@@ -25,8 +25,14 @@ type graphResult struct {
 	store     *policystore.PolicyStore
 	wepByID   map[string]*proto.WorkloadEndpoint
 	hepByName map[string]*proto.HostEndpoint
-	warnings  []string
-	errors    []string
+	// ipSetMembers holds the raw member strings the calc graph emitted per IP
+	// set (the IPSetUpdate/IPSetDeltaUpdate payloads). The policystore folds
+	// NET-type sets into a trie whose Members() is a stub, so callers that need
+	// to enumerate members (RenderHNS, which inlines addresses into ACLs) read
+	// them here instead. Membership tests (the checker) still use the store.
+	ipSetMembers map[string][]string
+	warnings     []string
+	errors       []string
 }
 
 // buildGraph constructs Felix's calc graph from a Request, feeds in the tiers,
@@ -42,8 +48,9 @@ type graphResult struct {
 // icmp type/code natively and shouldn't be pre-filtered by a probe.
 func buildGraph(req Request, icmp *icmpProbe) graphResult {
 	res := graphResult{
-		wepByID:   map[string]*proto.WorkloadEndpoint{},
-		hepByName: map[string]*proto.HostEndpoint{},
+		wepByID:      map[string]*proto.WorkloadEndpoint{},
+		hepByName:    map[string]*proto.HostEndpoint{},
+		ipSetMembers: map[string][]string{},
 	}
 
 	// Build the calc graph and route its emitted proto into a policystore,
@@ -67,6 +74,25 @@ func buildGraph(req Request, icmp *icmpProbe) graphResult {
 		}
 		if heu, ok := msg.(*proto.HostEndpointUpdate); ok && heu.GetId() != nil {
 			res.hepByName[heu.GetId().GetEndpointId()] = heu.GetEndpoint()
+		}
+		// Capture raw IP-set members for enumeration (see ipSetMembers doc).
+		if u, ok := msg.(*proto.IPSetUpdate); ok {
+			res.ipSetMembers[u.GetId()] = append([]string(nil), u.GetMembers()...)
+		}
+		if d, ok := msg.(*proto.IPSetDeltaUpdate); ok {
+			cur := res.ipSetMembers[d.GetId()]
+			removed := map[string]bool{}
+			for _, m := range d.GetRemovedMembers() {
+				removed[m] = true
+			}
+			next := make([]string, 0, len(cur)+len(d.GetAddedMembers()))
+			for _, m := range cur {
+				if !removed[m] {
+					next = append(next, m)
+				}
+			}
+			next = append(next, d.GetAddedMembers()...)
+			res.ipSetMembers[d.GetId()] = next
 		}
 	}
 

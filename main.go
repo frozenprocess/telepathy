@@ -82,6 +82,7 @@ var capabilities = []capability{
 	{"evaluate", "pod-to-pod connectivity matrix (default; Request in, JSON Response out)"},
 	{"iptables", "render the iptables/nftables chains Felix would program"},
 	{"bpf", "render the eBPF policy program Felix would JIT-assemble per endpoint/direction"},
+	{"hns", "render the Windows HNS ACL rules Felix would program per endpoint/direction"},
 }
 
 // printVersion writes the version banner and capability list to stdout. It is
@@ -123,6 +124,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "bpf" {
 		runBPF(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "hns" {
+		runHNS(os.Args[2:])
 		return
 	}
 
@@ -368,6 +373,105 @@ func formatBPF(resp engine.BPFResponse) string {
 			b.WriteString(line)
 			b.WriteByte('\n')
 		}
+	}
+	return b.String()
+}
+
+// runHNS implements `calico-engine hns`: read the same JSON Request from
+// stdin, render each endpoint's Windows HNS ACL list, print it. Renders all
+// endpoints + both directions by default; -endpoint and -direction narrow that.
+// HNS is IPv4-only, so there is no -ipversion flag.
+func runHNS(args []string) {
+	fs := flag.NewFlagSet("hns", flag.ExitOnError)
+	endpoint := fs.String("endpoint", "", "only render endpoints whose ID contains this substring (default: all)")
+	dir := fs.String("direction", "both", "direction(s) to render: ingress | egress | both")
+	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
+	policies := addRequestFlags(fs)
+	_ = fs.Parse(args)
+
+	req := loadRequest(*policies)
+
+	var opts engine.HNSOptions
+	if *endpoint != "" {
+		opts.Endpoints = []string{*endpoint}
+	}
+	switch *dir {
+	case "both":
+		opts.Directions = []string{"ingress", "egress"}
+	case "ingress", "egress":
+		opts.Directions = []string{*dir}
+	default:
+		fail("unknown -direction %q (want ingress|egress|both)", *dir)
+	}
+
+	resp := engine.RenderHNS(req, opts)
+
+	if *asJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
+			fail("encode response: %v", err)
+		}
+		return
+	}
+	fmt.Print(formatHNS(resp))
+}
+
+// formatHNS renders the response as text: one ACL block per (endpoint,
+// direction), each rule on its own line in priority order.
+func formatHNS(resp engine.HNSResponse) string {
+	var b strings.Builder
+	for _, w := range resp.Warnings {
+		fmt.Fprintf(&b, "# WARNING: %s\n", w)
+	}
+	for _, e := range resp.Errors {
+		fmt.Fprintf(&b, "# ERROR: %s\n", e)
+	}
+	if len(resp.Endpoints) == 0 {
+		b.WriteString("# no endpoints matched\n")
+	}
+	for _, ep := range resp.Endpoints {
+		fmt.Fprintf(&b, "\n# ===== %s  (%s iface=%s, IPv%d) =====\n",
+			ep.Endpoint, ep.Direction, ep.Interface, ep.IPVersion)
+		if ep.Error != "" {
+			fmt.Fprintf(&b, "# ERROR: %s\n", ep.Error)
+		}
+		if len(ep.Rules) == 0 {
+			b.WriteString("# (no rules)\n")
+		}
+		for _, r := range ep.Rules {
+			b.WriteString(formatHNSRule(r))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
+// formatHNSRule renders one ACL rule as an aligned key=value line, omitting
+// empty match fields. Protocol 256 is HNS's "any".
+func formatHNSRule(r engine.HNSRule) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  [%5d] %-5s %-6s", r.Priority, r.Action, r.Direction)
+	if r.Protocol == 256 {
+		b.WriteString(" proto=any")
+	} else {
+		fmt.Fprintf(&b, " proto=%d", r.Protocol)
+	}
+	if r.RemoteAddresses != "" {
+		fmt.Fprintf(&b, " remoteAddr=%s", r.RemoteAddresses)
+	}
+	if r.LocalAddresses != "" {
+		fmt.Fprintf(&b, " localAddr=%s", r.LocalAddresses)
+	}
+	if r.RemotePorts != "" {
+		fmt.Fprintf(&b, " remotePorts=%s", r.RemotePorts)
+	}
+	if r.LocalPorts != "" {
+		fmt.Fprintf(&b, " localPorts=%s", r.LocalPorts)
+	}
+	if r.RuleType != "" && r.RuleType != "Switch" {
+		fmt.Fprintf(&b, " ruleType=%s", r.RuleType)
+	}
+	if r.ID != "" {
+		fmt.Fprintf(&b, "  # %s", r.ID)
 	}
 	return b.String()
 }
