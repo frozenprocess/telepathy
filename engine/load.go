@@ -29,6 +29,21 @@ func DecodeRequest(data []byte) (Request, error) {
 	return req, nil
 }
 
+// DecodeResponse parses a Response from raw bytes that may be JSON or YAML —
+// the inverse of the matrix the default subcommand emits. It is the operand
+// loader for `diff`, which compares two such Responses (one per git checkout).
+// Empty input is an error: a missing/empty matrix is never a valid diff side.
+func DecodeResponse(data []byte) (Response, error) {
+	var resp Response
+	if strings.TrimSpace(string(data)) == "" {
+		return resp, fmt.Errorf("empty response (no matrix to diff)")
+	}
+	if err := yaml.Unmarshal(data, &resp); err != nil {
+		return resp, fmt.Errorf("decode response: %w", err)
+	}
+	return resp, nil
+}
+
 // ParsePolicyManifests turns the raw contents of a policy file (one or more
 // `---`-separated YAML documents) into PolicyInputs. Each document's flavor is
 // auto-detected from its apiVersion — only the ambiguous kind: NetworkPolicy

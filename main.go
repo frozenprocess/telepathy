@@ -21,6 +21,17 @@
 //
 //	calico-engine            evaluate connectivity (default; Request in,
 //	                         JSON Response out — the harness contract).
+//	calico-engine test       gate a topology against a connectivity test file
+//	                         (-assert FILE): each {from,to,expect} flow is
+//	                         checked and the command exits non-zero if any
+//	                         assertion fails — the CI contract. -json emits the
+//	                         structured AssertionReport instead of TAP-ish text.
+//	calico-engine diff       compare two evaluate Responses (BASE.json HEAD.json)
+//	                         and report the flows that changed — opened
+//	                         (deny->allow), closed (allow->deny), added, removed.
+//	                         -format markdown emits a PR-comment table; -json the
+//	                         structured DiffReport. With -exit-code, exits non-zero
+//	                         when any flow changed (git diff --exit-code style).
 //	calico-engine iptables   render the iptables/nftables chains Felix would
 //	                         program for the same Request. Text output by
 //	                         default; -json for the structured form.
@@ -80,6 +91,8 @@ type capability struct {
 
 var capabilities = []capability{
 	{"evaluate", "pod-to-pod connectivity matrix (default; Request in, JSON Response out)"},
+	{"test", "gate a topology against a connectivity assertions file (non-zero exit on failure)"},
+	{"diff", "compare two evaluate Responses and report opened/closed/added/removed flows (PR-comment markdown)"},
 	{"iptables", "render the iptables/nftables chains Felix would program"},
 	{"bpf", "render the eBPF policy program Felix would JIT-assemble per endpoint/direction"},
 	{"hns", "render the Windows HNS ACL rules Felix would program per endpoint/direction"},
@@ -128,6 +141,14 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "hns" {
 		runHNS(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "test" {
+		runTest(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "diff" {
+		runDiff(os.Args[2:])
 		return
 	}
 
@@ -473,6 +494,169 @@ func formatHNSRule(r engine.HNSRule) string {
 	if r.ID != "" {
 		fmt.Fprintf(&b, "  # %s", r.ID)
 	}
+	return b.String()
+}
+
+// runTest implements `calico-engine test`: read the same JSON/YAML Request
+// from stdin (topology) plus any -policy manifests, then check every assertion
+// in the -assert file against the evaluated connectivity matrix. Prints a
+// per-assertion pass/fail list and exits 1 if any assertion fails — the bit a
+// CI step keys off. -json emits the structured engine.AssertionReport instead.
+func runTest(args []string) {
+	fs := flag.NewFlagSet("test", flag.ExitOnError)
+	assertPath := fs.String("assert", "", "connectivity test file (YAML/JSON: a list of {from,to,expect[,port,protocol,name]}, or an `assertions:` key)")
+	asJSON := fs.Bool("json", false, "emit the structured JSON AssertionReport instead of text")
+	policies := addRequestFlags(fs)
+	_ = fs.Parse(args)
+
+	if *assertPath == "" {
+		fail("test: -assert FILE is required")
+	}
+	assertData, err := os.ReadFile(*assertPath)
+	if err != nil {
+		fail("read assertions %s: %v", *assertPath, err)
+	}
+	assertions, err := engine.DecodeAssertions(assertData)
+	if err != nil {
+		fail("%v", err)
+	}
+
+	req := loadRequest(*policies)
+	report := engine.RunAssertions(req, assertions)
+
+	if *asJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			fail("encode report: %v", err)
+		}
+		if !report.Ok() {
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Print(formatAssertionReport(report))
+	if !report.Ok() {
+		os.Exit(1)
+	}
+}
+
+// formatAssertionReport renders the report as a human- and grep-friendly list:
+// one `PASS`/`FAIL` line per assertion (with the expected vs. got verdict),
+// engine errors/warnings as comments, and a closing summary line.
+func formatAssertionReport(r engine.AssertionReport) string {
+	var b strings.Builder
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&b, "# WARNING: %s\n", w)
+	}
+	for _, e := range r.Errors {
+		fmt.Fprintf(&b, "# ERROR: %s\n", e)
+	}
+	for _, res := range r.Results {
+		status := "PASS"
+		if !res.Pass {
+			status = "FAIL"
+		}
+		a := res.Assertion
+		label := a.Name
+		if label == "" {
+			label = fmt.Sprintf("%s -> %s", a.From, a.To)
+		}
+		fmt.Fprintf(&b, "%s  %s", status, label)
+		if a.Name != "" {
+			fmt.Fprintf(&b, "  (%s -> %s)", a.From, a.To)
+		}
+		if res.Err != "" {
+			fmt.Fprintf(&b, "  [%s]", res.Err)
+		} else {
+			fmt.Fprintf(&b, "  expect=%s got=%s", strings.ToLower(strings.TrimSpace(a.Expect)), res.Got)
+		}
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "\n%d passed, %d failed\n", r.Passed, r.Failed)
+	return b.String()
+}
+
+// runDiff implements `calico-engine diff BASE.json HEAD.json`: decode two
+// evaluate Responses (the JSON the default subcommand emits — typically one per
+// git checkout) and report the flows that changed between them. Default output
+// is human-readable text; -format markdown emits the PR-comment table and
+// -format json the structured DiffReport. -exit-code makes the command exit 1
+// when anything changed, so a pipeline can choose to gate on drift.
+func runDiff(args []string) {
+	fs := flag.NewFlagSet("diff", flag.ExitOnError)
+	format := fs.String("format", "text", "output format: text | markdown | json")
+	exitCode := fs.Bool("exit-code", false, "exit non-zero when any flow changed (git diff --exit-code style)")
+	_ = fs.Parse(args)
+
+	rest := fs.Args()
+	if len(rest) != 2 {
+		fail("diff: need exactly two Response files: diff [flags] BASE.json HEAD.json")
+	}
+	base := loadResponseFile(rest[0])
+	head := loadResponseFile(rest[1])
+
+	report := engine.DiffResponses(base, head)
+
+	switch *format {
+	case "text":
+		fmt.Print(formatDiffText(report))
+	case "markdown", "md":
+		fmt.Print(engine.FormatDiffMarkdown(report))
+	case "json":
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			fail("encode report: %v", err)
+		}
+	default:
+		fail("unknown -format %q (want text|markdown|json)", *format)
+	}
+
+	if *exitCode && report.Changed() {
+		os.Exit(1)
+	}
+}
+
+// loadResponseFile reads and decodes one evaluate Response (JSON or YAML) from
+// a file, failing with a precise message — the two diff operands are the most
+// common thing to mistype.
+func loadResponseFile(path string) engine.Response {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fail("read response %s: %v", path, err)
+	}
+	resp, err := engine.DecodeResponse(data)
+	if err != nil {
+		fail("decode response %s: %v", path, err)
+	}
+	return resp
+}
+
+// formatDiffText renders the diff as a grep-friendly list: one line per changed
+// flow (kind, flow, before->after) plus a summary, or a single "no changes"
+// line. Mirrors the text the markdown table carries, for terminal/CI logs.
+func formatDiffText(r engine.DiffReport) string {
+	var b strings.Builder
+	for _, e := range r.Errors {
+		fmt.Fprintf(&b, "# ERROR: %s\n", e)
+	}
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&b, "# WARNING: %s\n", w)
+	}
+	if !r.Changed() {
+		b.WriteString("no connectivity changes\n")
+		return b.String()
+	}
+	for _, c := range r.Changes {
+		base, head := c.Base, c.Head
+		if base == "" {
+			base = "-"
+		}
+		if head == "" {
+			head = "-"
+		}
+		fmt.Fprintf(&b, "%-8s %s -> %s  (%s -> %s)\n", c.Kind, c.From, c.To, base, head)
+	}
+	fmt.Fprintf(&b, "\n%d changed: %d opened, %d closed, %d added, %d removed (%d unchanged)\n",
+		len(r.Changes), r.Opened, r.Closed, r.Added, r.Removed, r.Unchanged)
 	return b.String()
 }
 

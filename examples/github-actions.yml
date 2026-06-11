@@ -1,0 +1,38 @@
+# Example: drop this into .github/workflows/ in YOUR repo to check NetworkPolicy
+# changes on every pull request. It does two things:
+#
+#   1. Gates connectivity assertions  — fails the PR if an intended allow/deny
+#      no longer holds (e.g. "frontend must reach backend", "attacker must not").
+#   2. Comments the base-vs-PR diff   — a table of every flow the PR opened or
+#      closed, posted (and kept up to date) on the pull request.
+#
+# Point `topology`, `policy`, and `assertions` at files in your repo.
+name: NetworkPolicy check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # required to post the diff comment
+
+jobs:
+  telepathy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base-vs-PR diff needs git history
+
+      - uses: frozenprocess/telepathy@v1
+        with:
+          # endpoints + namespaces (the simulated cluster topology)
+          topology: testdata/sample-topology.yaml
+          # a policy file, or a directory of *.yaml policies
+          policy: testdata/sample-policy.yaml
+          # optional: assertions file — when set, a failing assertion fails the job
+          assertions: testdata/sample-assertions.yaml
+          # optional knobs (defaults shown):
+          # mode: auto            # auto | test | diff | both
+          # comment: "true"       # post/update the sticky PR comment
+          # fail-on-diff: "false" # also fail the job on ANY connectivity change

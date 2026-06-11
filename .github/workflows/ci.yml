@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Build the engine, run the unit tests, and dogfood the two CI gates against
+  # the sample data (assertions + base-vs-PR diff) using the host toolchain.
+  build-test:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: auto
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build (clones the pinned Calico tree, wires go.work)
+        run: make build
+      - name: Unit tests
+        run: go test ./engine/...
+      - name: Assertion gate (make verify)
+        run: make verify
+      - name: Connectivity diff demo (make diff-demo)
+        run: make diff-demo
+
+  # Exercise the published Action end to end against a locally built image, so
+  # the action.yml + script can't rot. On PRs this also posts the diff comment.
+  action-selftest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base-vs-PR diff needs history
+      - name: Build engine image
+        run: make image IMAGE=telepathy:ci
+      - name: Run Telepathy check
+        uses: ./
+        with:
+          image: telepathy:ci
+          topology: testdata/sample-topology.yaml
+          policy: testdata/sample-policy.yaml
+          assertions: testdata/sample-assertions.yaml
+          mode: both
+          comment: ${{ github.event_name == 'pull_request' }}

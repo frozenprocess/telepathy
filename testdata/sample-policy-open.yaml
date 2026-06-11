@@ -1,0 +1,19 @@
+# A "PR" revision of sample-policy.yaml that loosens the backend's ingress to
+# allow EVERY pod (empty `from`), instead of only app=frontend. Diffing an
+# evaluate of this against sample-policy.yaml surfaces the regression: the flow
+# demo/attacker -> demo/backend is newly opened (deny -> allow).
+#
+# Used by `make diff-demo` to show the base-vs-PR connectivity diff end to end.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - {}

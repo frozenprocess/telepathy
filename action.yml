@@ -1,0 +1,73 @@
+name: "Telepathy NetworkPolicy Check"
+description: >-
+  Simulate Kubernetes/Calico NetworkPolicy in CI using Calico's real policy
+  engine — gate connectivity assertions and comment the base-vs-PR connectivity
+  diff on the pull request. No cluster required.
+author: "frozenprocess"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  topology:
+    description: "Path (repo-relative) to the topology YAML: endpoints + namespaces piped to the engine as the evaluation Request."
+    required: true
+  policy:
+    description: "Path (repo-relative) to a policy manifest file OR a directory of *.yaml/*.yml policies to evaluate."
+    required: true
+  assertions:
+    description: "Path to a connectivity assertions file (list of {from,to,expect}). When set, the assertion gate runs and fails the job on a mismatch."
+    required: false
+    default: ""
+  mode:
+    description: "What to run: auto | test | diff | both. auto = both when `assertions` is set, else diff."
+    required: false
+    default: "auto"
+  image:
+    description: "calico-engine Docker image to run."
+    required: false
+    default: "ghcr.io/frozenprocess/telepathy:latest"
+  base-ref:
+    description: "Git ref to diff against for the connectivity diff. Defaults to the PR base branch."
+    required: false
+    default: "${{ github.base_ref }}"
+  comment:
+    description: "Post/update a sticky PR comment with the connectivity diff (needs pull-requests: write)."
+    required: false
+    default: "true"
+  fail-on-diff:
+    description: "Fail the job if any flow changed (git diff --exit-code style). The assertion gate fails independently of this."
+    required: false
+    default: "false"
+  github-token:
+    description: "Token used to post the PR comment."
+    required: false
+    default: "${{ github.token }}"
+
+outputs:
+  changed:
+    description: "\"true\" if any flow changed between base and head."
+    value: "${{ steps.run.outputs.changed }}"
+  opened:
+    description: "Number of flows newly allowed (deny -> allow)."
+    value: "${{ steps.run.outputs.opened }}"
+  closed:
+    description: "Number of flows newly denied (allow -> deny)."
+    value: "${{ steps.run.outputs.closed }}"
+
+runs:
+  using: "composite"
+  steps:
+    - id: run
+      shell: bash
+      env:
+        INPUT_TOPOLOGY: ${{ inputs.topology }}
+        INPUT_POLICY: ${{ inputs.policy }}
+        INPUT_ASSERTIONS: ${{ inputs.assertions }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_FAIL_ON_DIFF: ${{ inputs.fail-on-diff }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/telepathy-ci.sh"

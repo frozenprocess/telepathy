@@ -1,0 +1,18 @@
+# Sample connectivity test file for `calico-engine test`.
+#
+# Each entry asserts that a flow from->to evaluates to `expect` (allow|deny)
+# under the topology piped on stdin plus any -policy manifests. Port/protocol
+# are optional and inherit the Request's probe (8080/tcp here) when omitted.
+#
+# Run:
+#   calico-engine test -assert testdata/sample-assertions.yaml \
+#     -policy testdata/sample-policy.yaml < testdata/sample-topology.yaml
+assertions:
+  - name: frontend may reach backend
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: attacker must not reach backend
+    from: demo/attacker
+    to: demo/backend
+    expect: deny
