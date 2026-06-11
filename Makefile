@@ -69,6 +69,7 @@ export CGO_ENABLED=0
 # your own Request/manifest.
 TEST_INPUT  ?= testdata/sample-topology.yaml
 TEST_POLICY ?= testdata/sample-policy.yaml
+TEST_ASSERT ?= testdata/sample-assertions.yaml
 
 all: build  ## Build everything (default of `make all`)
 
@@ -169,6 +170,23 @@ test: build  ## Build, then feed a sample Request in and print the raw output
 	@echo ">> ----- raw engine output -----"
 	@$(BIN) -policy $(TEST_POLICY) < $(TEST_INPUT)
 	@echo ">> ------------------------------"
+
+verify: build  ## Build, then gate the topology against TEST_ASSERT (exits non-zero on a failed assertion — the CI contract)
+	@echo ">> asserting $(TEST_ASSERT) against $(TEST_INPUT) (+ $(TEST_POLICY))"
+	@$(BIN) test -assert $(TEST_ASSERT) -policy $(TEST_POLICY) < $(TEST_INPUT)
+
+# DIFF_BASE / DIFF_HEAD are the two policy revisions diff-demo compares against
+# the same topology — base (frontend-only) vs a PR that opens it to every pod.
+DIFF_BASE ?= testdata/sample-policy.yaml
+DIFF_HEAD ?= testdata/sample-policy-open.yaml
+
+diff-demo: build  ## Evaluate base vs PR policy on the same topology and print the connectivity diff (text + PR-comment markdown)
+	@$(BIN) -policy $(DIFF_BASE) < $(TEST_INPUT) > /tmp/telepathy-base.json
+	@$(BIN) -policy $(DIFF_HEAD) < $(TEST_INPUT) > /tmp/telepathy-head.json
+	@echo ">> ----- diff (text) -----"
+	@$(BIN) diff /tmp/telepathy-base.json /tmp/telepathy-head.json
+	@echo ">> ----- diff (markdown / PR comment) -----"
+	@$(BIN) diff -format markdown /tmp/telepathy-base.json /tmp/telepathy-head.json
 
 # --- Cleanup ---------------------------------------------------------------
 clean:  ## Remove build artifacts
