@@ -1,8 +1,6 @@
 name: "Telepathy NetworkPolicy Check"
 description: >-
-  Simulate Kubernetes/Calico NetworkPolicy in CI using Calico's real policy
-  engine — gate connectivity assertions and comment the base-vs-PR connectivity
-  diff on the pull request. No cluster required.
+  Simulate Kubernetes/Calico NetworkPolicy in CI using Calico's real policy engine. No cluster required.
 author: "frozenprocess"
 branding:
   icon: "shield"

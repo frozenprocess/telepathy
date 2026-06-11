@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 The Telepathy Authors
+#
+# This file is part of Telepathy.
+#
+# Telepathy is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License version 3 as published
+# by the Free Software Foundation.
+#
+# Telepathy is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+# more details.
 #
 # telepathy-ci.sh — the body of the Telepathy GitHub Action (action.yml).
 #
