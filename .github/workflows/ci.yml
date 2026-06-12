@@ -9,6 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  # Verify that every commit in the PR is signed off per the DCO.
+  dco:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check DCO sign-off
+        uses: dcoapp/app@v4  # renovate: datasource=github-tags depName=dcoapp/app
+
   # Build the engine, run the unit tests, and dogfood the two CI gates against
   # the sample data (assertions + base-vs-PR diff) using the host toolchain.
   build-test:

@@ -1,0 +1,21 @@
+# CODEOWNERS
+# Each line maps a path pattern to the GitHub users responsible for reviewing
+# and approving changes to those files. The last matching pattern takes
+# precedence. See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: all files
+* @frozenprocess
+
+# Policy engine
+/engine/ @frozenprocess
+
+# CI/CD and release infrastructure
+/.github/ @frozenprocess
+/Makefile @frozenprocess
+/Dockerfile @frozenprocess
+/action.yml @frozenprocess
+
+# Governance and legal
+/GOVERNANCE.md @frozenprocess
+/SECURITY.md @frozenprocess
+/LICENSE @frozenprocess
