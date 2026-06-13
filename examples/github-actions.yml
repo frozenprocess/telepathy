@@ -27,11 +27,11 @@ jobs:
       - uses: frozenprocess/telepathy@v1
         with:
           # endpoints + namespaces (the simulated cluster topology)
-          topology: testdata/sample-topology.yaml
+          topology: e2e/testdata/sample-topology.yaml
           # a policy file, or a directory of *.yaml policies
-          policy: testdata/sample-policy.yaml
+          policy: e2e/testdata/sample-policy.yaml
           # optional: assertions file — when set, a failing assertion fails the job
-          assertions: testdata/sample-assertions.yaml
+          assertions: e2e/testdata/sample-assertions.yaml
           # optional knobs (defaults shown):
           # mode: auto            # auto | test | diff | both
           # comment: "true"       # post/update the sticky PR comment

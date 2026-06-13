@@ -1,0 +1,30 @@
+# The Log action is NON-TERMINAL: evaluation continues with the next rule.
+#
+# Unlike Allow and Deny (which are final the instant they match), a Log rule
+# records the packet and then falls through to the following rules. This policy
+# exploits that ordering:
+#
+#   1. Log    — matches every ingress packet to prod/database, logs it, and
+#               CONTINUES (it does not allow anything).
+#   2. Deny   — drops sources with app=='frontend'.
+#   3. Allow  — permits everything that reached this far.
+#
+# Because Log is non-terminal, a frontend source is logged by Rule 1 and then
+# DENIED by Rule 2 — it never reaches the Allow. If Log were mistakenly treated
+# as a terminal Allow, frontend would be permitted; the observed frontend deny
+# is what proves Log only logs. Non-frontend sources are logged, skip the Deny,
+# and are allowed by Rule 3.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-database-log-then-deny-frontend
+spec:
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Log
+    - action: Deny
+      source:
+        selector: app == 'frontend'
+    - action: Allow

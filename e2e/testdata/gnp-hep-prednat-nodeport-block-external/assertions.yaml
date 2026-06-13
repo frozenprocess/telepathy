@@ -1,0 +1,12 @@
+# Connectivity assertions for 'gnp-hep-prednat-nodeport-block-external'.
+# Both flows are off-cluster observer -> NodePort Service (node-IP:nodePort),
+# governed by the preDNAT host firewall before DNAT.
+assertions:
+  # Source CIDR denied by the preDNAT policy: dropped before DNAT.
+  - from: world/blocked
+    to: svc/prod/web-np
+    expect: deny
+  # Source CIDR not denied: passes preDNAT, DNATs to the backend, connects.
+  - from: world/allowed
+    to: svc/prod/web-np
+    expect: allow

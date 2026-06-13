@@ -1,0 +1,127 @@
+# =============================================================================
+# topology.yaml — the self-contained telepathy evaluation Request: the world the
+# policy is evaluated against (endpoints + namespaces + probe) plus any extra
+# resources the policy references (services, network sets, host endpoints, ...).
+#
+# The harness pipes this to the engine on stdin and realizes the same objects on
+# the live cluster, then compares. Fictional IPs here are remapped to the real
+# pod / node IPs the cluster assigns (see ipmap.go), so write whatever readable
+# addresses you like.
+#
+# Run the engine standalone the same way the harness does:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+#
+# This template is a minimal 3-pod, single-namespace case. The blocks below the
+# core ones (services / networkSets / hostEndpoints / serviceAccounts) are
+# commented out — uncomment and edit only what your policy actually references.
+# =============================================================================
+
+# namespaces — every namespace your endpoints live in. Labels are projected onto
+# pods as pcns.<k>=<v>, which is what namespaceSelector rules compile against.
+# Always include `kubernetes.io/metadata.name: <name>` (Kubernetes sets it
+# automatically on the real cluster; the engine needs it to match name-based
+# namespace selectors).
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+      env: demo
+
+# endpoints — the workload pods. Each becomes a row AND a column in the
+# connectivity matrix. `id` is the "<namespace>/<name>" key used in assertions.
+endpoints:
+  - id: demo/frontend
+    namespace: demo
+    name: frontend
+    ip: 10.0.0.1            # fictional; remapped to the real pod IP at runtime
+    labels:
+      app: frontend
+      tier: web
+    ports:                 # the L4 ports the pod's server listens on
+      - name: http
+        port: 8080
+        protocol: tcp      # tcp | udp | sctp (case-insensitive; defaults to tcp)
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    # node: <node>          # OPTIONAL — pin to a node (only matters for HEP cases)
+    # serviceAccountName: x # OPTIONAL — for serviceAccounts.selector rules
+    # role: workload        # OPTIONAL — "workload" (default) | "external" | "host"
+    # unpoliced: false      # OPTIONAL — node with no HEP: its own traffic is
+                            #            unconditionally allowed (only peer policy bites)
+
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+
+  - id: demo/attacker
+    namespace: demo
+    name: attacker
+    ip: 10.0.0.3
+    labels:
+      app: attacker
+      tier: web
+
+# --- optional resource blocks (uncomment what your policy references) --------
+
+# services — Kubernetes Services. Surface as a `svc/<ns>/<name>` matrix column
+# (reachable iff a backing pod is). Used by Calico `destination.services` rules.
+# Set type: NodePort + nodePort for an externally reachable preDNAT/NodePort case
+# (pair with meta.yaml externalProbe + role: external endpoints).
+#services:
+#  - name: backend-svc
+#    namespace: demo
+#    type: ClusterIP        # ClusterIP (default) | NodePort
+#    selector:
+#      app: backend
+#    ports:
+#      - port: 8080
+#        protocol: TCP
+#        targetPort: "8080" # int-or-string: numeric or a named container port
+#        # nodePort: 30080  # only for type: NodePort
+
+# networkSets — namespaced Calico NetworkSet: a bag of CIDRs + labels that
+# rules match by selector. globalNetworkSets is the cluster-scoped variant.
+#networkSets:
+#  - name: partners
+#    namespace: demo
+#    nets: [192.0.2.0/24]
+#    labels: { scope: partner }
+#globalNetworkSets:
+#  - name: internet
+#    nets: [1.1.1.0/24]
+#    labels: { scope: internet }
+
+# hostEndpoints — Calico HostEndpoints (a node interface treated as a
+# policy-bearing endpoint). Each is a `host/<name>` row/col. interfaceName "*"
+# means all interfaces. Requires E2E_INCLUDE_HEP=1 and flavor: calico.
+#hostEndpoints:
+#  - name: node-fw
+#    node: telepathy-e2e-calico-worker
+#    interfaceName: "*"
+#    expectedIPs: [172.18.0.4]   # remapped to the real node InternalIP
+#    labels: { role: fw }
+
+# serviceAccounts — labels for a ServiceAccount, projected onto referencing pods
+# as pcsa.<k>=<v> for serviceAccounts.selector rules.
+#serviceAccounts:
+#  - name: frontend-sa
+#    namespace: demo
+#    labels: { team: web }
+
+# --- probe (REQUIRED) --------------------------------------------------------
+# The single (protocol, port) every ordered pair is probed at. Must match a
+# port a destination endpoint actually serves. Assertions may override per-row.
+port: 8080
+protocol: tcp

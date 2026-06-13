@@ -1,0 +1,46 @@
+# =============================================================================
+# meta.yaml — per-case knobs read by the e2e harness (e2e/e2e_test.go).
+#
+# Only `flavor:` is required. Every other key is optional and defaults to the
+# value shown; delete the ones you don't need. This template case ships as a
+# plain-k8s NetworkPolicy example, so it runs on every engine and needs none of
+# the advanced (HEP / external) knobs — they're documented below, commented out,
+# so you can flip them on by copying this directory.
+#
+# Copy this whole directory to start a new case:
+#   cp -r e2e/testdata/_template e2e/testdata/my-new-case
+# A directory becomes a case the moment it contains an assertions.yaml.
+# =============================================================================
+
+# flavor (REQUIRED) — which policy dialect policy.yaml is written in, which also
+# decides which engines run the case:
+#   k8s    - upstream Kubernetes NetworkPolicy (networking.k8s.io/v1).
+#            Evaluated by EVERY provider (calico, antrea, ...). Use this for a
+#            portable case.
+#   calico - projectcalico.org/v3 CRDs (GlobalNetworkPolicy, Tier, HostEndpoint,
+#            (Global)NetworkSet, ...). Only the calico engine runs it.
+# A case runs under `E2E_PROVIDER=<p>` when flavor == "k8s" OR flavor == <p>;
+# otherwise it is skipped.
+flavor: k8s
+
+# --- advanced knobs (leave commented out for a simple case) ------------------
+
+# externalProbe (default false) — realize endpoints with `role: external` as
+# off-cluster Docker containers on the kind network and probe from them via
+# `docker exec`, instead of as in-cluster pods. This is the only externally
+# routable vantage; needed for north-south cases (preDNAT / NodePort) where the
+# policy is exercised by traffic entering a node from outside.
+#externalProbe: false
+
+# hepAvoidColocation (default false) — steer HostEndpoint placement OFF the
+# nodes hosting the pods the HEP must police across the host boundary. A
+# wildcard ("*") HEP cannot police traffic to/from a pod on its OWN node (that
+# rides a cali workload interface), so host<->pod assertions only reproduce when
+# the HEP and those pods land on different nodes. Only relevant to HEP cases.
+#hepAvoidColocation: false
+
+# minNodes (default 0 = no requirement) — minimum cluster node count the case
+# needs to reproduce. Below it the case is SKIPPED rather than emitting a false
+# engine-vs-cluster DIFF. Multi-node HEP cases typically need 3 (control-plane
+# + 2 workers) so a worker can host none of the policed pods.
+#minNodes: 3

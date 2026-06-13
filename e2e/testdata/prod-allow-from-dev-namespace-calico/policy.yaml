@@ -1,0 +1,12 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-from-dev-namespace
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'

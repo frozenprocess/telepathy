@@ -1,0 +1,131 @@
+# Topology for testcase 'np-egress-namespaced-netset'.
+# Intent: Restrict prod/frontend egress to a namespaced Calico NetworkSet. The NetworkSet 'trusted-egress' (namespace prod, label tier=trusted) holds CIDR 1.1.1.0/24; a namespaced NetworkPolicy allows prod/frontend egress only to destination.selector tier=='trusted', which resolves to that CIDR. The external host world/internet (1.1.1.1) is inside the set and reachable; all in-cluster pod egress is denied by the types:[Egress] default-deny. Other pods are unconstrained.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: world/internet
+    namespace: world
+    name: internet
+    ip: 1.1.1.1
+    labels:
+      tier: trusted
+    role: external
+    unpoliced: true
+networkSets:
+  - name: trusted-egress
+    namespace: prod
+    nets:
+      - 1.1.1.0/24
+    labels:
+      tier: trusted
+port: 8080
+protocol: tcp

@@ -1,0 +1,26 @@
+# Egress to an external (off-cluster) CIDR via a bare `destination.nets`.
+#
+# prod/frontend gets an egress-only GlobalNetworkPolicy whose single Allow rule
+# permits egress only to 1.1.1.0/24 — a public CIDR no pod IP falls inside. The
+# `types: [Egress]` implicit default-deny then blocks every other egress from
+# frontend (to pods, services, the rest of the internet). Ingress to frontend
+# is untouched, and no other pod is selected.
+#
+# The harness models "the internet" as a destination-only endpoint
+# (world/internet, declared in meta.json["external_endpoints"]) whose IP
+# 1.1.1.1 sits inside 1.1.1.0/24. The calico engine matches the endpoint IP
+# against the rule's nets, so frontend->world/internet is allowed while
+# frontend->anything-else is denied.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-allow-external-cidr
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        nets:
+          - 1.1.1.0/24

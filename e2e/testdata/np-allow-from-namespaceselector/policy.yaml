@@ -1,0 +1,25 @@
+# Namespaced NetworkPolicy: source.namespaceSelector broadens a rule beyond
+# the policy's own namespace.
+#
+# By default a NetworkPolicy rule selector only matches the policy's namespace
+# (see np-allow-same-namespace-source). Adding a source.namespaceSelector
+# overrides that, selecting endpoints in EVERY namespace whose labels match —
+# here env=='dev'. With no source.selector alongside it, the rule matches all
+# pods in the dev namespace.
+#
+# So prod/database accepts ingress from any dev pod, but NOT from prod pods
+# (the namespaceSelector restricts sources to dev, displacing the implicit
+# same-namespace default). Everything else hits the ingress default-deny.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: prod-database-allow-from-dev-ns
+  namespace: prod
+spec:
+  selector: app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'

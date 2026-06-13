@@ -1,0 +1,13 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: telepathy
+networking:
+  # We install Calico ourselves so policy enforcement actually works.
+  # (kind's default kindnet CNI does NOT enforce NetworkPolicy.)
+  disableDefaultCNI: true
+  # Must match the Calico IPPool cidr in calico-resources.yaml.
+  podSubnet: "192.168.0.0/16"
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

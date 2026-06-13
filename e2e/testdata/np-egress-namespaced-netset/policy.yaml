@@ -1,0 +1,26 @@
+# Egress restricted to a namespaced Calico NetworkSet.
+#
+# A NetworkSet is the namespaced cousin of a GlobalNetworkSet: a labelled bag
+# of CIDRs scoped to one namespace, referenceable by a NetworkPolicy in the
+# same namespace via a destination.selector. Here the NetworkSet
+# `trusted-egress` (namespace prod, label tier=trusted) holds the CIDR
+# 1.1.1.0/24 (declared in meta.json["network_sets"], threaded to the engine).
+#
+# The namespaced NetworkPolicy gives prod/frontend an egress-only rule allowing
+# traffic to destination.selector tier=='trusted', which Calico resolves to the
+# NetworkSet's CIDR. The external endpoint world/internet (1.1.1.1) is inside
+# that CIDR and reachable; every other egress destination — all in-cluster pods
+# — is blocked by the types:[Egress] default-deny.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress-only-trusted-netset
+  namespace: prod
+spec:
+  selector: app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        selector: tier == 'trusted'

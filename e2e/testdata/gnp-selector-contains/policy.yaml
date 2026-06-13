@@ -1,0 +1,12 @@
+# Substring-match selector. `contains 'tabas'` picks every workload whose
+# app label contains the literal substring "tabas" — in our topology only
+# `database` matches. types: [Ingress] with no rules => implicit ingress
+# default-deny on the selected (database) pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-app-contains-tabas
+spec:
+  selector: app contains 'tabas'
+  types:
+    - Ingress

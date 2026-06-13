@@ -1,0 +1,116 @@
+# Topology for testcase 'gnp-selector-has'.
+# Intent: Cluster-wide, deny ingress to every workload pod using the has(env) match operator, which selects any endpoint carrying an `env` label regardless of value. The application pods in prod and dev are labelled env=prod/env=dev and are selected (types:[Ingress], no rules => implicit ingress default-deny); the system-namespace pods carry no `env` label, so has(env) does not select them and they remain reachable on the CNI default. Demonstrates label-presence selection independent of value.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+port: 8080
+protocol: tcp

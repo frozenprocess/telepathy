@@ -1,0 +1,21 @@
+# protocol: ICMP — a non-L4 protocol match.
+#
+# The ingress rule allows only ICMP to prod pods; with types: [Ingress] the
+# implicit default-deny covers every other protocol. So prod pods answer pings
+# (ICMP) but refuse TCP — the inverse of the usual "allow the app port" rule,
+# and a common pattern for keeping liveness/diagnostic ICMP open while locking
+# down application traffic.
+#
+# Verified with two probes: an ICMP probe (allowed) and the TCP/8080 app probe
+# (denied). ICMP has no L4 ports, so the rule carries no `ports`.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-icmp-only
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: ICMP

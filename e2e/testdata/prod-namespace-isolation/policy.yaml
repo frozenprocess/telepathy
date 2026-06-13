@@ -1,0 +1,15 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-namespace-isolation
+spec:
+  # Selects pods (endpoints) carrying the env=prod label, cluster-wide.
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    # Allow ingress only from other prod pods; everything else falls through
+    # to Calico's implicit deny for selected endpoints.
+    - action: Allow
+      source:
+        selector: env == 'prod'

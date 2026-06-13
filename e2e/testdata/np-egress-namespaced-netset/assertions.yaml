@@ -1,0 +1,35 @@
+# Connectivity assertions for 'np-egress-namespaced-netset' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: prod/backend
+    expect: deny
+  - from: prod/frontend
+    to: prod/database
+    expect: deny
+  - from: prod/frontend
+    to: dev/frontend
+    expect: deny
+  - from: prod/frontend
+    to: dev/backend
+    expect: deny
+  - from: prod/frontend
+    to: dev/database
+    expect: deny
+  - from: prod/frontend
+    to: world/internet
+    expect: allow
+  - from: prod/backend
+    to: prod/frontend
+    expect: allow
+  - from: prod/backend
+    to: prod/database
+    expect: allow
+  - from: prod/backend
+    to: dev/frontend
+    expect: allow
+  - from: prod/backend
+    to: dev/backend
+    expect: allow
+  - from: prod/backend
+    to: dev/database
+    expect: allow

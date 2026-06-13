@@ -1,0 +1,54 @@
+# Two-tier composition demonstrating the canonical platform-team / app-team
+# split that ClusterNetworkPolicy enables:
+#
+#   1. The platform team sets a cluster-wide *Baseline* default-deny floor for
+#      all ingress to the prod namespace. Baseline tier only "wins" for flows
+#      that no NetworkPolicy decides on.
+#   2. The app team carves out a per-namespace exception with a plain K8s
+#      NetworkPolicy: prod/backend is reachable from prod/frontend. That NP
+#      makes a final decision for selected pods, terminating tier evaluation
+#      before Baseline gets a vote — so prod/backend can receive from prod/
+#      frontend even though Baseline would otherwise deny it.
+#
+# Flows the model should learn from this case:
+#   * prod/frontend -> prod/backend     ALLOW (NP carve-out fires; NP wins)
+#   * dev/* -> prod/backend             DENY  (NP doesn't allow non-frontend
+#                                              sources; NP makes a final
+#                                              decision for selected pods)
+#   * */-> prod/database, prod/frontend DENY  (no NP selects them; falls through
+#                                              to Baseline default-deny)
+#   * any -> dev/*                      ALLOW (Baseline only targets prod;
+#                                              dev sees no policy at all)
+apiVersion: policy.networking.k8s.io/v1alpha2
+kind: ClusterNetworkPolicy
+metadata:
+  name: prod-baseline-deny-all-ingress
+spec:
+  tier: Baseline
+  priority: 100
+  subject:
+    namespaces:
+      matchLabels:
+        env: prod
+  ingress:
+    - name: deny-all
+      action: Deny
+      from:
+        - namespaces: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-from-frontend
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend

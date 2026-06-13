@@ -1,0 +1,22 @@
+# A StagedGlobalNetworkPolicy does NOT enforce — it is a dry-run.
+#
+# Staged policies let an operator preview a policy's impact (via flow logs)
+# before committing to it. They flow through the same selector/rule machinery
+# as the enforced kind, but the dataplane treats their verdicts as
+# observe-only: no packet is ever dropped or allowed because of a staged
+# policy.
+#
+# This StagedGlobalNetworkPolicy looks like a hard lockdown — selector
+# env=='prod', types:[Ingress], no rules, which as an ENFORCED
+# GlobalNetworkPolicy would default-deny all ingress to every prod pod. Because
+# it is staged, it has zero effect on connectivity: prod stays fully reachable.
+# Promoting it (drop the `Staged` prefix from the kind) is what would actually
+# enforce the deny.
+apiVersion: projectcalico.org/v3
+kind: StagedGlobalNetworkPolicy
+metadata:
+  name: prod-default-deny-ingress-staged
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress

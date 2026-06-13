@@ -1,0 +1,25 @@
+# destination.notSelector — allow egress to everything that does NOT match a
+# label selector.
+#
+# The rule allows prod/frontend egress to any destination whose labels do NOT
+# satisfy app=='database'. As with notNets/notPorts, the `not` negates the
+# packet match: a flow to a database pod fails the rule and drops to the
+# types:[Egress] default-deny, while a flow to any non-database endpoint
+# matches and is allowed.
+#
+# Because a GlobalNetworkPolicy selector is cluster-wide, notSelector
+# app=='database' excludes database pods in EVERY namespace — so frontend is
+# blocked from both prod/database and dev/database, but free to reach backends,
+# frontends, and the internet anywhere.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-except-databases
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        notSelector: app == 'database'

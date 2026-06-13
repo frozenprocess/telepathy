@@ -1,0 +1,32 @@
+# Per-rule `destination.ports` lists. Each rule pairs a single protocol
+# with a list of allowed destination ports — Calico evaluates a rule as
+# matched iff the packet's protocol matches AND the packet's destination
+# port is in the list (or in any port range/named port in the list).
+#
+# The TCP list includes the topology's app port (8080), so all TCP
+# probes to prod/database land inside an Allow rule. The UDP list
+# deliberately omits the topology's UDP echo port (8081), so UDP probes
+# to prod/database land outside every Allow rule and are blocked by the
+# types: [Ingress] implicit default-deny.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-database-mixed-port-lists
+spec:
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        ports:
+          - 8080
+          - 8443
+          - 9000
+    - action: Allow
+      protocol: UDP
+      destination:
+        ports:
+          - 53
+          - 9999

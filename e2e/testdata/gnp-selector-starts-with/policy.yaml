@@ -1,0 +1,12 @@
+# Prefix-match selector. `starts with 'data'` picks every workload whose
+# app label begins with "data" — in our topology only `database` matches.
+# types: [Ingress] with no rules => implicit ingress default-deny on the
+# selected (database) pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-database-starts-with
+spec:
+  selector: app starts with 'data'
+  types:
+    - Ingress

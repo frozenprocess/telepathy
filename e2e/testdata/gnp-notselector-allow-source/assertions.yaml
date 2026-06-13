@@ -1,0 +1,32 @@
+# Connectivity assertions for 'gnp-notselector-allow-source' (derived from the testcase intent).
+assertions:
+  - from: prod/database
+    to: prod/frontend
+    expect: deny
+  - from: prod/database
+    to: prod/backend
+    expect: deny
+  - from: dev/database
+    to: prod/frontend
+    expect: deny
+  - from: dev/database
+    to: prod/backend
+    expect: deny
+  - from: dev/database
+    to: prod/database
+    expect: deny
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+  - from: prod/frontend
+    to: prod/database
+    expect: allow
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+  - from: prod/frontend
+    to: dev/database
+    expect: allow

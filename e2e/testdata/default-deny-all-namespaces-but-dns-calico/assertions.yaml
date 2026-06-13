@@ -1,0 +1,57 @@
+# Connectivity assertions for 'default-deny-all-namespaces-but-dns-calico' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: prod/backend
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: prod/database
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: dev/frontend
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: dev/backend
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: dev/database
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - from: prod/frontend
+    to: prod/backend
+    expect: deny
+    protocol: udp
+    port: 53
+  - from: prod/frontend
+    to: prod/database
+    expect: deny
+    protocol: udp
+    port: 53
+  - from: prod/frontend
+    to: dev/frontend
+    expect: deny
+    protocol: udp
+    port: 53
+  - from: prod/frontend
+    to: dev/backend
+    expect: deny
+    protocol: udp
+    port: 53
+  - from: prod/frontend
+    to: dev/database
+    expect: deny
+    protocol: udp
+    port: 53

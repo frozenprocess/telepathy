@@ -1,0 +1,21 @@
+# has(key) — the label-presence match operator.
+#
+# has(env) selects every endpoint that carries an `env` label REGARDLESS of its
+# value. In this topology only the workload pods (prod + dev) are labelled with
+# env; the system-namespace pods (calico-system, kube-system, tigera-operator,
+# local-path-storage) use app.kubernetes.io/* and k8s-app conventions and have
+# no `env` label, so has(env) cleanly selects the application workloads and
+# leaves the platform pods unselected.
+#
+# types: [Ingress] with no rules then default-denies ingress to every workload
+# pod in both namespaces, while the unselected system pods keep the CNI default
+# (allow). This is the canonical "lock down all my app pods, leave the platform
+# alone" selector.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-all-labelled-workloads
+spec:
+  selector: has(env)
+  types:
+    - Ingress

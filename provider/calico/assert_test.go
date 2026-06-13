@@ -23,7 +23,7 @@ import (
 	"github.com/frozenprocess/telepathy/api"
 )
 
-// assertTopology is a three-pod namespace mirroring testdata: frontend and
+// assertTopology is a three-pod namespace mirroring e2e/testdata: frontend and
 // attacker both try to reach backend on 8080. The layered policy permits only
 // app==frontend, so frontend->backend allows and attacker->backend denies —
 // the canonical pass/fail pair the assertion engine must distinguish.

@@ -1,0 +1,27 @@
+# Denying egress to a Service's backend pods makes the Service VIP unreachable.
+#
+# The Service `backend-svc` (namespace prod, selector app=backend) is declared
+# in meta.json["services"]; the engine exposes a svc/prod/backend-svc column
+# that is reachable iff at least one backend pod is. This policy denies
+# prod/frontend's egress to every app=backend pod (then allows the rest), so
+# from frontend the only backend (prod/backend) is unreachable and therefore the
+# Service VIP is too — while non-backend destinations (prod/database, the dev
+# namespace) stay reachable.
+#
+# This is the deny-side complement of gnp-egress-allow-via-service: there a
+# destination.services rule made the Service reachable; here a pod-selector Deny
+# on its backends takes the Service down, demonstrating that the svc column
+# tracks backend reachability rather than the ClusterIP literal.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-deny-backend-allow-rest
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Deny
+      destination:
+        selector: app == 'backend'
+    - action: Allow

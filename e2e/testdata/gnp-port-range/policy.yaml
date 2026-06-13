@@ -1,0 +1,24 @@
+# Port-range syntax. Calico accepts three forms in `ports`:
+#   - a numeric port           (e.g. 8080)
+#   - a named container port   (e.g. http — see gnp-named-port)
+#   - an inclusive range as a quoted string "low:high"
+#
+# Here 8000:8090 covers the topology's app port 8080. The range form
+# must be quoted in YAML — without quotes it parses as a YAML sexagesimal
+# integer literal.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-tcp-port-range-from-dev
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: env == 'dev'
+      destination:
+        ports:
+          - "8000:8090"

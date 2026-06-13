@@ -1,0 +1,116 @@
+# Topology for testcase 'gnp-egress-destination-notselector'.
+# Intent: Allow prod/frontend egress to every destination EXCEPT database pods, using destination.notSelector app=='database'. notSelector negates the packet match, so a flow to any non-database endpoint is allowed and a flow to a database pod drops to the types:[Egress] default-deny. The GlobalNetworkPolicy selector is cluster-wide, so database pods in both namespaces are blocked: frontend->prod/database and frontend->dev/database are denied, while frontend->prod/backend, frontend->dev pods, and frontend->internet are allowed. No other pod is constrained.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+port: 8080
+protocol: tcp

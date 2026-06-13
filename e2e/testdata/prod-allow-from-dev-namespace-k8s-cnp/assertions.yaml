@@ -1,0 +1,62 @@
+# Connectivity assertions for 'prod-allow-from-dev-namespace-k8s-cnp' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: prod/backend
+    expect: deny
+  - from: prod/frontend
+    to: prod/database
+    expect: deny
+  - from: prod/backend
+    to: prod/frontend
+    expect: deny
+  - from: prod/backend
+    to: prod/database
+    expect: deny
+  - from: prod/database
+    to: prod/frontend
+    expect: deny
+  - from: prod/database
+    to: prod/backend
+    expect: deny
+  - from: dev/frontend
+    to: prod/frontend
+    expect: allow
+  - from: dev/frontend
+    to: prod/backend
+    expect: allow
+  - from: dev/frontend
+    to: prod/database
+    expect: allow
+  - from: dev/backend
+    to: prod/frontend
+    expect: allow
+  - from: dev/backend
+    to: prod/backend
+    expect: allow
+  - from: dev/backend
+    to: prod/database
+    expect: allow
+  - from: dev/database
+    to: prod/frontend
+    expect: allow
+  - from: dev/database
+    to: prod/backend
+    expect: allow
+  - from: dev/database
+    to: prod/database
+    expect: allow
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+  - from: prod/frontend
+    to: dev/database
+    expect: allow
+  - from: prod/backend
+    to: dev/frontend
+    expect: allow
+  - from: prod/backend
+    to: dev/backend
+    expect: allow

@@ -1,0 +1,29 @@
+# Adapted from the workshop's 04.calico-kube-controller-to-api.yaml: a
+# namespaced Calico NetworkPolicy where both the selected pods and the
+# destination pods live in the same namespace, identified purely by their app
+# label (no namespaceSelector). In the workshop this restricts the calico-
+# kube-controllers pod's egress to the calico-apiserver in the same namespace;
+# our analog restricts prod/frontend's egress to prod/backend only.
+#
+# Sibling of prod-frontend-egress-to-any-backend: same selector, same allowed
+# destination tier, but no `namespaceSelector` — Calico NetworkPolicy's default
+# scope for the destination selector is the policy's own namespace, so this
+# allows prod-frontend -> prod-backend only, NOT prod-frontend -> dev-backend.
+# Egress to everywhere else (including dev/backend) is denied.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: prod-frontend-egress-to-prod-backend
+  namespace: prod
+spec:
+  order: 1001
+  selector: 'app == "frontend"'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: 'app == "backend"'
+        ports:
+          - 8080

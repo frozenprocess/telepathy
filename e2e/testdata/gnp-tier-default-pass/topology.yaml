@@ -1,0 +1,116 @@
+# Topology for testcase 'gnp-tier-default-pass'.
+# Intent: A user-defined Calico tier `audit` with `defaultAction: Pass` sits at order 50 (before the default tier at 1M). The audit tier carries one GlobalNetworkPolicy that targets prod/database and denies ingress from frontend pods; any other source the audit policy doesn't match falls through via the tier's Pass default to the default tier. The default tier holds a second GlobalNetworkPolicy that allows ingress to prod from the dev namespace. Net effect: dev/backend and dev/database can reach prod/database; dev/frontend cannot (audit denies it before the default tier sees it); all other prod ingress follows the default tier's rule — dev sources allowed, prod-to-prod denied by the default tier's implicit deny. Demonstrates `defaultAction: Pass` on a user tier.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+port: 8080
+protocol: tcp

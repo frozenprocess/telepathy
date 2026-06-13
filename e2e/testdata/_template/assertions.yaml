@@ -1,0 +1,42 @@
+# =============================================================================
+# assertions.yaml — the expected connectivity verdicts. The harness checks BOTH
+# the engine prediction and the live cluster against these; a mismatch fails the
+# case. Its presence is what marks this directory as a runnable case.
+#
+# Each assertion:
+#   from:     source endpoint id ("<ns>/<name>", or "svc/<ns>/<name>" for a
+#             Service column, "host/<name>" for a HostEndpoint).      REQUIRED
+#   to:       destination id, same forms.                            REQUIRED
+#   expect:   "allow" | "deny".                                      REQUIRED
+#   protocol: tcp | udp | sctp. OPTIONAL — defaults to the topology probe.
+#   port:     destination port.  OPTIONAL — defaults to the topology probe.
+#   name:     free-text label for this assertion. OPTIONAL.
+#
+# You don't have to assert every pair — only the flows that express the intent.
+# =============================================================================
+assertions:
+  # The one allowed flow: frontend reaches backend on the permitted port.
+  - name: frontend may reach backend
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+    protocol: tcp
+    port: 8080
+
+  # Everything else into backend is denied by the default-deny.
+  - name: attacker is blocked from backend
+    from: demo/attacker
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 8080
+
+  # The default-deny (podSelector: {}) covers EVERY pod in demo, including
+  # frontend, and the allow rule only opens app=frontend -> app=backend. So the
+  # reverse direction backend -> frontend stays denied.
+  - name: reverse direction backend -> frontend stays denied
+    from: demo/backend
+    to: demo/frontend
+    expect: deny
+    protocol: tcp
+    port: 8080

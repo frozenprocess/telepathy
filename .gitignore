@@ -12,3 +12,5 @@
 # Scratch dirs the GitHub Action writes (evaluated matrices + base worktree).
 /.telepathy/
 /.telepathy-base/
+
+/e2e/logs/

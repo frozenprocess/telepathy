@@ -1,0 +1,62 @@
+# Connectivity assertions for 'gnp-hep-donottrack-database-to-host' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: host/kind-node-dnt
+    expect: allow
+  - from: dev/frontend
+    to: host/kind-node-dnt
+    expect: allow
+  - from: prod/backend
+    to: host/kind-node-dnt
+    expect: allow
+  - from: dev/backend
+    to: host/kind-node-dnt
+    expect: allow
+  - from: prod/database
+    to: host/kind-node-dnt
+    expect: deny
+  - from: dev/database
+    to: host/kind-node-dnt
+    expect: deny
+  - from: host/kind-node-dnt
+    to: prod/frontend
+    expect: allow
+  - from: host/kind-node-dnt
+    to: dev/frontend
+    expect: allow
+  - from: host/kind-node-dnt
+    to: prod/backend
+    expect: allow
+  - from: host/kind-node-dnt
+    to: dev/backend
+    expect: allow
+  # host -> database is ALLOW, not deny: the HostEndpoint uses interfaceName "*"
+  # (all-interfaces), and Calico's dataplane silently ignores doNotTrack policy
+  # on such a HEP (felix endpoint_mgr.go). With the untracked tier gone, only
+  # the normal companion policy applies, whose egress rule allows the host out.
+  # (The reverse, database -> host, is deny in the policy model — see the two
+  # assertions above. On a real cluster this needs natOutgoing to not SNAT
+  # pod->node-IP traffic, else the source pod identity is hidden and the HEP
+  # can't match; the e2e harness handles that with a disabled IPPool over the
+  # node subnet — see nodeSubnetPoolManifest in e2e/hep.go.)
+  - from: host/kind-node-dnt
+    to: prod/database
+    expect: allow
+  - from: host/kind-node-dnt
+    to: dev/database
+    expect: allow
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+  - from: prod/frontend
+    to: prod/database
+    expect: allow
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+  - from: prod/frontend
+    to: dev/database
+    expect: allow

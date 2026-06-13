@@ -1,0 +1,32 @@
+# Calico-native tier composition (the predecessor and superset of v1alpha2
+# ClusterNetworkPolicy's Admin/Baseline tier model):
+#
+#   1. Declare a user-defined `compliance` Tier at order 50 — below the
+#      kube-admin tier (order 1K) but above the default tier (order 1M).
+#      defaultAction: Deny means a policy in this tier that selects a pod but
+#      doesn't match a rule for it will deny that flow.
+#   2. Add a GlobalNetworkPolicy to that tier (spec.tier: compliance) that
+#      selects all prod pods and produces an Ingress block with no rules.
+#      Combined with the tier's Deny default, this is a cluster-wide
+#      default-deny floor for ingress to prod.
+#
+# Because the compliance tier evaluates before the default tier, any policy a
+# namespace owner writes in the default tier (which is where Calico's own
+# auto-converted Kubernetes NetworkPolicies live) cannot override this deny.
+apiVersion: projectcalico.org/v3
+kind: Tier
+metadata:
+  name: compliance
+spec:
+  order: 50
+  defaultAction: Deny
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: compliance-deny-prod-ingress
+spec:
+  tier: compliance
+  selector: env == 'prod'
+  types:
+    - Ingress

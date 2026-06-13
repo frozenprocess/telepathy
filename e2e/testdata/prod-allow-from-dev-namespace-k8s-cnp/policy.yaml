@@ -1,0 +1,33 @@
+# Upstream Kubernetes NetworkPolicy API (KEP-2091) v1alpha2 ClusterNetworkPolicy
+# — the cluster-scoped resource that replaces v1alpha1 AdminNetworkPolicy and
+# BaselineAdminNetworkPolicy in a single object. Calico v3.32+ understands it
+# natively (converts to a kube-admin/kube-baseline tier GlobalNetworkPolicy).
+#
+# Two rules in the Admin tier:
+#   1. Accept ingress to env=prod from env=dev  (analogous to a Calico GNP Allow)
+#   2. Deny everything else inbound to env=prod (Admin tier defaults to Pass, so
+#      without this rule non-dev sources would fall through to NetworkPolicy /
+#      Baseline / default-allow). Ordering is by list position within a tier+
+#      priority bucket; Accept fires first so dev traffic doesn't hit the Deny.
+apiVersion: policy.networking.k8s.io/v1alpha2
+kind: ClusterNetworkPolicy
+metadata:
+  name: prod-allow-from-dev-namespace
+spec:
+  tier: Admin
+  priority: 10
+  subject:
+    namespaces:
+      matchLabels:
+        env: prod
+  ingress:
+    - name: allow-from-dev
+      action: Accept
+      from:
+        - namespaces:
+            matchLabels:
+              env: dev
+    - name: deny-rest
+      action: Deny
+      from:
+        - namespaces: {}

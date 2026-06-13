@@ -1,0 +1,36 @@
+# Two ingress rules in one policy, each carrying its own protocol,
+# source scope, and destination port. Calico evaluates a packet
+# against each rule in order; the first rule whose protocol/source/
+# destination ALL match decides the action.
+#
+# Rule 1: TCP/8080 from prod-ns sources only — allows e.g. prod/frontend
+#         to reach prod/database on the app port.
+# Rule 2: UDP/8081 from dev-ns sources only — allows e.g. dev/backend
+#         to reach prod/database on the UDP echo port.
+#
+# Anything else (prod source on UDP, dev source on TCP, any source on a
+# different port, any source on a different protocol) misses both rules
+# and is dropped by the types: [Ingress] implicit deny.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-database-tcp-from-prod-udp-from-dev
+spec:
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        namespaceSelector: env == 'prod'
+      destination:
+        ports:
+          - 8080
+    - action: Allow
+      protocol: UDP
+      source:
+        namespaceSelector: env == 'dev'
+      destination:
+        ports:
+          - 8081

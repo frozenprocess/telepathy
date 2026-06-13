@@ -1,0 +1,31 @@
+# Egress permitted only via a Kubernetes Service reference (destination.services).
+#
+# The Service `backend-svc` (namespace prod, selector app=backend) is declared
+# in meta.json["services"]; the harness threads it to the engine, which resolves
+# it to its backend pod IPs and exposes a svc/prod/backend-svc column (reachable
+# iff a backend pod is). prod/database is NOT a backend, so it stays unreachable.
+#
+# The GlobalNetworkPolicy gives prod/frontend an egress-only rule that allows
+# traffic to destination.services backend-svc and nothing else (the types:
+# [Egress] default-deny blocks the rest). Calico turns the services reference
+# into the set of backend pod IPs, so frontend->prod/backend is allowed (it
+# backs the Service) while frontend->prod/database and frontend->dev/backend
+# (a different namespace, not in this Service) are denied.
+#
+# This is the service-aware analogue of a plain pod-selector egress policy: the
+# allowed set follows the Service's membership, so it tracks scaling/rescheduling
+# of the backend without policy edits.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-only-to-backend-svc
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        services:
+          name: backend-svc
+          namespace: prod

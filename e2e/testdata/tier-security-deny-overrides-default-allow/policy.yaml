@@ -1,0 +1,64 @@
+# Calico-native two-tier composition where a high-priority tier carves out
+# DENIES that a lower-priority tier can't override:
+#
+#   1. `security` tier (order 100, defaultAction: Pass)
+#        Sits between kube-admin (1K) and default (1M). Pass-by-default means
+#        an unmatched flow falls through to the next tier rather than being
+#        denied here.
+#      └─ GNP `security-block-database-into-prod` (in tier `security`)
+#         Selects prod ingress, with one rule: action=Deny when the source's
+#         pod label is `app=database`. Anything else trickles down to default.
+#
+#   2. `default` tier (built-in, defaultAction: Deny)
+#      └─ GNP `default-allow-prod-from-dev` (no `spec.tier` => default tier)
+#         Selects prod ingress, with one rule: action=Allow from `env=dev`
+#         namespace. This is the broad app-level allow.
+#
+# Composition outcome the model should learn:
+#   * dev/database -> prod/*       DENY  (security tier deny is final)
+#   * prod/database -> prod/*      DENY  (security tier deny is final)
+#   * dev/backend, dev/frontend -> prod/*   ALLOW  (security Pass → default Allow)
+#   * prod/backend, prod/frontend -> prod/* DENY  (security Pass → default tier
+#                                                  selects but no allow rule
+#                                                  matches → default tier
+#                                                  defaultAction=Deny)
+#   * any -> dev/*                ALLOW  (no policy targets dev)
+#
+# This is the canonical "platform team's security exception overrides app
+# team's allow" pattern, and it relies on the Calico Pass action — the same
+# semantics CNP introduced upstream as Admin/Baseline Pass, but on arbitrarily-
+# named user-defined tiers.
+apiVersion: projectcalico.org/v3
+kind: Tier
+metadata:
+  name: security
+spec:
+  order: 100
+  defaultAction: Pass
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: security-block-database-into-prod
+spec:
+  tier: security
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        selector: app == 'database'
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: default-allow-prod-from-dev
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'

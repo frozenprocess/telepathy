@@ -1,0 +1,26 @@
+# Connectivity assertions for 'gnp-deny-egress-to-service-backends' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: prod/backend
+    expect: deny
+  - from: prod/frontend
+    to: dev/backend
+    expect: deny
+  - from: prod/frontend
+    to: svc/prod/backend-svc
+    expect: deny
+  - from: prod/frontend
+    to: prod/database
+    expect: allow
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+  - from: prod/frontend
+    to: dev/database
+    expect: allow
+  - from: prod/backend
+    to: prod/frontend
+    expect: allow
+  - from: prod/backend
+    to: prod/database
+    expect: allow

@@ -1,0 +1,25 @@
+# source.namespaceSelector AND source.selector — both must match.
+#
+# When an EntityRule carries both a namespaceSelector and a selector, Calico
+# ANDs them: a source endpoint matches only if its NAMESPACE satisfies the
+# namespaceSelector AND the ENDPOINT itself satisfies the selector. Here the
+# rule allows ingress to prod/database only from sources that are BOTH in a
+# namespace labelled env=='dev' AND carry app=='frontend' — i.e. exactly
+# dev/frontend.
+#
+# So dev/frontend is allowed, but dev/backend (right namespace, wrong pod
+# label) and prod/frontend (right pod label, wrong namespace) are both denied.
+# This is how you express cross-namespace rules that are also pod-specific.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-database-allow-dev-frontend-only
+spec:
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'
+        selector: app == 'frontend'

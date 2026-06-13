@@ -1,0 +1,24 @@
+# First-match-wins inside a single policy. Calico evaluates the
+# ingress list top to bottom; the action of the FIRST rule whose
+# criteria all match is final, even if a later rule would also match.
+#
+# Rule order here is intentional: the Deny is listed before the Allow
+# so that frontend sources (matched by Rule 1) never reach Rule 2 — they
+# get Deny, not Allow, even when they're in the dev namespace that
+# Rule 2 would otherwise allow. Flip the rule order and dev/frontend
+# would be allowed instead.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-database-deny-frontend-allow-dev
+spec:
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        selector: app == 'frontend'
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'

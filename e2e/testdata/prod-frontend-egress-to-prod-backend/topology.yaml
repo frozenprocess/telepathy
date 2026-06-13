@@ -1,0 +1,116 @@
+# Topology for testcase 'prod-frontend-egress-to-prod-backend'.
+# Intent: In the prod namespace, restrict the frontend tier's outbound traffic to the backend tier within the same namespace. Prod frontend pods may only connect to prod backend pods on TCP port 8080. They cannot reach the backend in any other namespace (e.g. dev/backend is off limits), and they cannot reach databases or other frontends. Inbound traffic to prod/frontend is not restricted, and no other pods are affected.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+port: 8080
+protocol: tcp

@@ -240,3 +240,65 @@ func anyContains(xs []string, needle string) bool {
 	}
 	return false
 }
+
+// TestDoNotTrackIgnoredOnAllInterfacesHEP pins the engine to Calico's dataplane
+// behaviour: doNotTrack policy is enforced on a named-interface HostEndpoint but
+// silently ignored on an all-interfaces (interfaceName: "*") one
+// (felix/dataplane/linux/endpoint_mgr.go). The topology pairs a normal allow-all
+// tier with a doNotTrack tier that denies app=="a" ingress, so the untracked
+// tier is the only thing that can deny ns/a->host/gw — dropping it on a "*" HEP
+// flips that flow back to allow and surfaces a warning.
+func TestDoNotTrackIgnoredOnAllInterfacesHEP(t *testing.T) {
+	normalAllow := `
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata: {name: gw-normal-allow}
+spec:
+  selector: role == "gateway"
+  types: [Ingress, Egress]
+  ingress: [{action: Allow}]
+  egress: [{action: Allow}]
+`
+	dntDenyA := `
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata: {name: gw-dnt-deny-a}
+spec:
+  selector: role == "gateway"
+  doNotTrack: true
+  applyOnForward: true
+  types: [Ingress, Egress]
+  ingress: [{action: Deny, source: {selector: app == "a"}}, {action: Allow}]
+  egress: [{action: Allow}]
+`
+	policies := []PolicyInput{{YAML: normalAllow}, {YAML: dntDenyA}}
+
+	// Named interface: the untracked tier is enforced, so the doNotTrack ingress
+	// deny blocks ns/a->host/gw while ns/b->host/gw stays allowed.
+	named := hepCommonInputs()
+	named.HostEndpoints[0].InterfaceName = "eth0"
+	named.Policies = policies
+	resp := Evaluate(named)
+	for _, err := range resp.Errors {
+		t.Fatalf("named: unexpected error: %s", err)
+	}
+	mustVerdict(t, resp, "ns/a->host/gw", "deny")
+	mustVerdict(t, resp, "ns/b->host/gw", "allow")
+	if anyContains(resp.Warnings, "doNotTrack policy is not supported") {
+		t.Errorf("named interface should not warn about doNotTrack, got %v", resp.Warnings)
+	}
+
+	// All-interfaces: doNotTrack is ignored, so ns/a->host/gw falls through to
+	// the normal allow-all tier, and the engine warns it dropped the policy.
+	wild := hepCommonInputs()
+	wild.HostEndpoints[0].InterfaceName = "*"
+	wild.Policies = policies
+	resp = Evaluate(wild)
+	for _, err := range resp.Errors {
+		t.Fatalf("all-interfaces: unexpected error: %s", err)
+	}
+	mustVerdict(t, resp, "ns/a->host/gw", "allow")
+	if !anyContains(resp.Warnings, "doNotTrack policy is not supported") {
+		t.Errorf("all-interfaces HEP should warn that doNotTrack was ignored, got %v", resp.Warnings)
+	}
+}

@@ -1,0 +1,21 @@
+# Prefix-`!` negation. Calico's selector grammar lets you negate an
+# entire expression with `!expr`, with grouping via parentheses. Here
+# `!(app == 'database')` matches every workload whose app label is
+# anything but "database" (including absent). Combined with
+# `env == 'prod'` via `&&`, the GNP selects prod/frontend and
+# prod/backend.
+#
+# Semantically near-identical to `app != 'database'`, but spelled with
+# the explicit `!` to exercise the negation operator path in selector
+# parsing.
+#
+# types: [Ingress] with no rules => implicit ingress default-deny on the
+# selected pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-prod-not-database
+spec:
+  selector: env == 'prod' && !(app == 'database')
+  types:
+    - Ingress

@@ -5,8 +5,8 @@
 # are optional and inherit the Request's probe (8080/tcp here) when omitted.
 #
 # Run:
-#   telepathy test -assert testdata/sample-assertions.yaml \
-#     -policy testdata/sample-policy.yaml < testdata/sample-topology.yaml
+#   telepathy test -assert e2e/testdata/sample-assertions.yaml \
+#     -policy e2e/testdata/sample-policy.yaml < e2e/testdata/sample-topology.yaml
 assertions:
   - name: frontend may reach backend
     from: demo/frontend

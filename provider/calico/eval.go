@@ -502,6 +502,22 @@ func buildActors(req Request, wepByID map[string]*proto.WorkloadEndpoint,
 			// the conversion error; no need to re-warn here.
 			continue
 		}
+		// Mirror Calico's dataplane: doNotTrack policy is silently ignored on an
+		// all-interfaces (interfaceName: "*") HostEndpoint. The calc graph still
+		// splits doNotTrack rules into UntrackedTiers, but felix's endpoint
+		// manager refuses to program untracked chains for a "*" HEP — see
+		// felix/dataplane/linux/endpoint_mgr.go ("DoNotTrack policy is not
+		// supported for a HEP with `interfaceName: *`; ignoring it"). Drop them
+		// here so the engine predicts what the dataplane actually enforces (the
+		// HEP's normal/preDNAT/applyOnForward tiers are unaffected).
+		if hep.InterfaceName == "*" && len(hp.GetUntrackedTiers()) > 0 {
+			hp.UntrackedTiers = nil
+			out.warnings = append(out.warnings, fmt.Sprintf(
+				"HostEndpoint %q: doNotTrack policy is not supported on an all-interfaces "+
+					"(interfaceName: \"*\") HostEndpoint and is ignored (matches Calico dataplane behaviour)",
+				hep.Name))
+		}
+
 		id := "host/" + hep.Name
 		var ip net.IP
 		if len(hep.ExpectedIPs) > 0 {

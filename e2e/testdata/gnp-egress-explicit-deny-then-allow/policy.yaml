@@ -1,0 +1,25 @@
+# Egress-only policy with an explicit Deny followed by a catch-all
+# Allow. `types: [Egress]` keeps the ingress pipeline untouched on
+# selected pods, so prod/frontend remains reachable from everywhere
+# (no implicit ingress deny is created). For egress:
+#
+#   Rule 1: Deny any flow whose destination has app=database.
+#   Rule 2: Allow everything (no source/destination/protocol filter).
+#
+# First-match-wins: database destinations hit Rule 1's Deny; every other
+# destination falls through to Rule 2's Allow. Without Rule 2 the
+# types: [Egress] implicit default-deny would block all non-database
+# egress too.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-frontend-egress-deny-database-allow-rest
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Deny
+      destination:
+        selector: app == 'database'
+    - action: Allow

@@ -1,0 +1,17 @@
+# `notProtocol` is the negative complement of `protocol` at the rule
+# level (not inside an entity rule). The rule fires for packets whose
+# protocol is anything OTHER than the listed one — here TCP, ICMP, SCTP,
+# etc. all match, but UDP does not. UDP traffic to selected pods is
+# left to the implicit deny created by types: [Ingress] with no
+# matching allow rule.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-ingress-non-udp
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      notProtocol: UDP

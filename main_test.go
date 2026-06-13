@@ -42,11 +42,11 @@ func TestEngineAgreesWithCalico(t *testing.T) {
 	}
 	t.Setenv("TELEPATHY_ANTREA_ENGINE", engine)
 
-	topology, err := os.ReadFile("testdata/sample-topology.yaml")
+	topology, err := os.ReadFile("e2e/testdata/sample-topology.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := os.ReadFile("testdata/sample-policy.yaml")
+	policy, err := os.ReadFile("e2e/testdata/sample-policy.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

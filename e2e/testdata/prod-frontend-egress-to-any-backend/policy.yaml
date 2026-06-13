@@ -1,0 +1,31 @@
+# Adapted from the workshop's 03.calico-api-to-kapi.yaml: a namespaced Calico
+# NetworkPolicy that selects a specific pod tier (there: calico-apiserver, here:
+# frontend) and constrains its egress to a single named destination tier in any
+# namespace on a single port. The workshop's destination is host endpoints
+# (the kube-apiserver runs as a host process, selector has(kubernetes.io/os) +
+# namespaceSelector: global()); the analog in our pod-only topology is
+# "backend pods, in any namespace, on the backend's app port".
+#
+# `types: [Egress]` is explicit. Without it, Calico applies the policy in
+# *both* directions and the implicit default-deny would also block ingress to
+# prod/frontend — a subtle footgun the workshop's bundle compensates for with
+# companion ingress policies, but for a single-policy testcase we set the
+# types scope precisely.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: prod-frontend-egress-to-any-backend
+  namespace: prod
+spec:
+  order: 1001
+  selector: 'app == "frontend"'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: 'app == "backend"'
+        namespaceSelector: all()
+        ports:
+          - 8080

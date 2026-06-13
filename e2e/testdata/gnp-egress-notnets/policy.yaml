@@ -1,0 +1,26 @@
+# destination.notNets — a negated-CIDR carve-out inside an allow rule.
+#
+# The egress rule allows prod/frontend to reach the whole IPv4 space
+# (0.0.0.0/0) EXCEPT the addresses listed in notNets. notNets negates the
+# packet match: a destination whose IP falls in 10.0.0.3/32 does NOT match the
+# rule and therefore drops to the types:[Egress] default-deny.
+#
+# 10.0.0.3 is prod/database in the topology, so frontend can egress anywhere —
+# other prod pods, the dev namespace, the internet — except prod/database,
+# which is punched out by IP. notNets is how you express "allow broadly, but
+# never to these specific addresses" without enumerating an allow-list.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-except-database-ip
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        nets:
+          - "0.0.0.0/0"
+        notNets:
+          - "10.0.0.3/32"

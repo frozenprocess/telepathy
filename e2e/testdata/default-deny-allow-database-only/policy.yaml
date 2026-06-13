@@ -1,0 +1,36 @@
+# Adapted from the workshop's 02.deny-app-policy.yaml: a single
+# GlobalNetworkPolicy that establishes a cluster-wide default-deny for every
+# Kubernetes-namespaced pod (selected via has(projectcalico.org/name)) and then
+# carves out one targeted exception. In the workshop the exception is "egress
+# UDP to kube-dns:53" — the minimum every pod still needs to function. Here the
+# exception is "TCP to database:8080" — the architectural analog: a shared
+# infrastructure tier every other tier needs to talk to.
+#
+# Both an ingress AND an egress rule are needed because Calico evaluates both
+# directions: the source's egress must permit the traffic, AND the destination's
+# ingress must permit it. With only the egress rule, even database pods would
+# refuse all inbound (they're selected by the same policy, default-deny).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-app-policy
+spec:
+  order: 1001
+  namespaceSelector: has(projectcalico.org/name)
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: 'app == "database"'
+        ports:
+          - 8080
+  egress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: 'app == "database"'
+        ports:
+          - 8080

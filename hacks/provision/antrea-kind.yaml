@@ -1,0 +1,13 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: telepathy-antrea
+networking:
+  # We install Antrea ourselves so policy enforcement actually works.
+  # (kind's default kindnet CNI does NOT enforce NetworkPolicy.)
+  disableDefaultCNI: true
+  # Antrea picks up each node's podCIDR, which kube-controller-manager carves
+  # from this range. 10.244.0.0/16 is the conventional kind pod subnet.
+  podSubnet: "10.244.0.0/16"
+nodes:
+  - role: control-plane
+  - role: worker

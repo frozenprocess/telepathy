@@ -1,0 +1,18 @@
+# Set-membership selector. Calico's `in {…}` operator selects workloads
+# whose label value matches any value in the literal set — equivalent to
+# `app == 'frontend' || app == 'backend'` but more compact and faster to
+# evaluate (the doc calls it out as an "optimized" selector form).
+#
+# With types: [Ingress] and no `ingress` rules, every selected pod gets
+# the implicit Calico ingress default-deny; frontends and backends in
+# both namespaces refuse all inbound. Database pods don't carry an
+# `app in {frontend, backend}` label, so the GNP doesn't select them
+# and they remain reachable.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-frontend-and-backend
+spec:
+  selector: app in {"frontend", "backend"}
+  types:
+    - Ingress

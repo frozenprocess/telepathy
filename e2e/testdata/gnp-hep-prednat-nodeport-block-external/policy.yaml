@@ -1,0 +1,40 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prednat-block-external-cidr
+spec:
+  # Applies to the wildcard HostEndpoints on every node. preDNAT requires
+  # applyOnForward and Ingress-only rules. The Deny matches the blocked
+  # observer's source CIDR (rewritten to its real IP by the harness); everything
+  # else is allowed through the preDNAT hook. Evaluated before kube-proxy DNAT.
+  selector: role == 'prednat-fw'
+  preDNAT: true
+  applyOnForward: true
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        nets:
+          - 203.0.113.5/32
+    - action: Allow
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prednat-allow-forward
+spec:
+  # Normal (non-preDNAT) applyOnForward allow so traffic that clears the preDNAT
+  # hook is actually forwarded on to the backend pod through the host's forward
+  # chains. Without this, the wildcard HostEndpoint's default-drop would block
+  # the allowed flow after DNAT. The discriminating deny lives in the preDNAT
+  # tier above; this tier just keeps the node from locking itself out.
+  selector: role == 'prednat-fw'
+  applyOnForward: true
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Allow
+  egress:
+    - action: Allow

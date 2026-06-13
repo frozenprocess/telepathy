@@ -1,0 +1,23 @@
+# Numeric protocol form: `protocol: 17` is UDP.
+#
+# Calico accepts a protocol as either a name (TCP/UDP/ICMP/SCTP/…) or a raw IP
+# protocol number 1-255. Number 17 is UDP, so this rule is identical to
+# `protocol: UDP` — it allows UDP/8081 ingress to prod pods and nothing else.
+# The numeric form is what you reach for when a protocol has no Calico keyword.
+#
+# Verified with a UDP/8081 probe (allowed) and the TCP/8080 app probe (denied),
+# confirming the number resolves to UDP and not TCP.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-proto-17-udp
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: 17
+      destination:
+        ports:
+          - 8081

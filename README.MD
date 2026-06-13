@@ -30,7 +30,7 @@ make diff-demo      # diff a base policy vs a PR that loosens it
 The engine is a stdin → stdout filter: a topology Request goes in, a JSON connectivity matrix comes out.
 
 ```bash
-./bin/telepathy -policy testdata/sample-policy.yaml < testdata/sample-topology.yaml
+./bin/telepathy -policy e2e/testdata/sample-policy.yaml < e2e/testdata/sample-topology.yaml
 ```
 ```json
 { "matrix": {
@@ -128,7 +128,7 @@ telepathy hns      -policy p.yaml < topology.yaml   # Windows HNS ACL rules
 
 ## Input format
 
-A Request is a topology (`endpoints`, `namespaces`) plus a probe (`port`, `protocol`); policies are layered in from stdin or via `-policy` (a file or a directory of manifests). Kubernetes `networking.k8s.io/v1` NetworkPolicies and Calico `projectcalico.org/v3` (Global)NetworkPolicy, Tier, NetworkSet, HostEndpoint, Service/ServiceAccount selectors, and more are supported. See [`testdata/`](testdata/) for a minimal end-to-end example.
+A Request is a topology (`endpoints`, `namespaces`) plus a probe (`port`, `protocol`); policies are layered in from stdin or via `-policy` (a file or a directory of manifests). Kubernetes `networking.k8s.io/v1` NetworkPolicies and Calico `projectcalico.org/v3` (Global)NetworkPolicy, Tier, NetworkSet, HostEndpoint, Service/ServiceAccount selectors, and more are supported. See [`e2e/testdata/`](e2e/testdata/) for a minimal end-to-end example.
 
 ```yaml
 namespaces:

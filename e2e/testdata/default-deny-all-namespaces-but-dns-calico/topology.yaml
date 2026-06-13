@@ -1,0 +1,142 @@
+# Topology for testcase 'default-deny-all-namespaces-but-dns-calico'.
+# Intent: Test that all traffic is denied by default, even between namespaces,
+# except for DNS traffic to the internal coredns DNS pods. The live e2e harness
+# owns the namespaces it creates and cannot adopt the real kube-system, so DNS is
+# modelled by a coredns stand-in (labelled k8s-app=kube-dns) in a dedicated
+# dns-system namespace that the policy excludes from the deny, mirroring how the
+# real kube-system is excluded.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+  # Stand-in for the cluster's DNS namespace. The live e2e harness creates and
+  # tears down its own namespaces, so it cannot adopt the real kube-system (and
+  # must not plant a fake k8s-app=kube-dns pod there — that pod would be picked
+  # up as an endpoint of the real kube-dns Service). We model DNS in a managed
+  # namespace excluded from the deny GNP, mirroring how the real kube-system is
+  # excluded; the coredns pod still carries k8s-app=kube-dns so the egress DNS
+  # allow rule matches it by pod selector exactly as it would in kube-system.
+  - name: dns-system
+    labels:
+      kubernetes.io/metadata.name: dns-system
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dns-system/coredns
+    namespace: dns-system
+    name: coredns
+    ip: 10.0.1.10
+    labels:
+      k8s-app: kube-dns
+    ports:
+      - name: dns
+        port: 53
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+port: 53
+protocol: udp

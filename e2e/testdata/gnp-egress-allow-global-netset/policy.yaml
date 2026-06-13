@@ -1,0 +1,27 @@
+# Egress to an external CIDR via a GlobalNetworkSet (a labelled, cluster-scoped
+# CIDR bag) referenced by a destination.selector — the named-set form of the
+# bare-nets case in gnp-egress-allow-external-cidr.
+#
+# The GlobalNetworkSet `internet` carries the CIDR 1.1.1.0/24 and a
+# scope=internet label (declared in meta.json["global_network_sets"], threaded
+# to the engine via Request.globalNetworkSets). The GlobalNetworkPolicy on
+# prod/frontend allows egress to any destination matching scope=='internet',
+# which resolves to that CIDR. Everything else is denied by the types:[Egress]
+# default-deny.
+#
+# world/internet (1.1.1.1) sits inside the set's CIDR, so frontend->world is
+# allowed and frontend->pods is denied. Using a selector instead of bare nets
+# is how real policies stay readable when the CIDR list grows or is shared
+# across many policies.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: frontend-egress-allow-internet-set
+spec:
+  selector: env == 'prod' && app == 'frontend'
+  types:
+    - Egress
+  egress:
+    - action: Allow
+      destination:
+        selector: scope == 'internet'

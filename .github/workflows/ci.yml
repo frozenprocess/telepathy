@@ -32,12 +32,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build (clones the pinned Calico tree, wires go.work)
+      - name: Build (clones the pinned Calico + Antrea trees, wires both go.work files)
         run: make build
-      - name: Unit tests
-        run: go test ./engine/...
+      - name: Unit tests — shell + api contract + Calico provider
+        # Scope to the project's own packages: ./... would also pull the
+        # workspace's third_party/calico tree (incl. the cgo-only Felix BPF
+        # packages, which don't build under CGO_ENABLED=0).
+        run: go test . ./api/... ./provider/...
+      - name: Unit tests — out-of-process Antrea engine
+        # Its own module/workspace (Antrea's native dependency versions), so it
+        # is tested from inside engines/antrea. `make build` wired its go.work.
+        run: cd engines/antrea && go test ./...
       - name: Assertion gate (make verify)
         run: make verify
+      - name: Full assertion sweep (make verify-all — every e2e/testdata/<case>/)
+        run: make verify-all
       - name: Connectivity diff demo (make diff-demo)
         run: make diff-demo
 
@@ -58,8 +67,8 @@ jobs:
         uses: ./
         with:
           image: telepathy:ci
-          topology: testdata/sample-topology.yaml
-          policy: testdata/sample-policy.yaml
-          assertions: testdata/sample-assertions.yaml
+          topology: e2e/testdata/sample-topology.yaml
+          policy: e2e/testdata/sample-policy.yaml
+          assertions: e2e/testdata/sample-assertions.yaml
           mode: both
           comment: ${{ github.event_name == 'pull_request' }}

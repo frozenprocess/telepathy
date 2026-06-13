@@ -7,7 +7,7 @@
 #
 #   make build      # clone Calico (if needed), create go.work, build the binary
 #   make test       # build, then feed a sample Request in and print the raw output
-#   make calico     # just fetch the pinned Calico source tree
+#   make fetch      # vendor source trees (CNI=all|calico|antrea, comma-list ok)
 #   make clean      # remove build artifacts
 #   make distclean  # also remove the Calico checkout and go.work
 
@@ -75,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test calico antrea clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-calico e2e-antrea clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -83,9 +83,9 @@ export CGO_ENABLED=0
 # Sample evaluation input for `make test`: a topology piped on stdin plus a
 # NetworkPolicy layered in via -policy. Override to point the smoke test at
 # your own Request/manifest.
-TEST_INPUT  ?= testdata/sample-topology.yaml
-TEST_POLICY ?= testdata/sample-policy.yaml
-TEST_ASSERT ?= testdata/sample-assertions.yaml
+TEST_INPUT  ?= e2e/testdata/sample-topology.yaml
+TEST_POLICY ?= e2e/testdata/sample-policy.yaml
+TEST_ASSERT ?= e2e/testdata/sample-assertions.yaml
 
 all: build  ## Build everything (default of `make all`)
 
@@ -109,15 +109,32 @@ $(CALICO_DIR):
 	@echo ">> cloning $(CALICO_REPO) @ $(CALICO_VERSION) into $(CALICO_DIR)"
 	git clone --depth 1 --branch $(CALICO_VERSION) $(CALICO_REPO) $(CALICO_DIR)
 
-calico: $(CALICO_DIR)  ## Fetch the pinned Calico source tree
-
 # --- Antrea source ---------------------------------------------------------
 # Shallow clone of the pinned Antrea tag, vendored the same way as Calico.
 $(ANTREA_DIR):
 	@echo ">> cloning $(ANTREA_REPO) @ $(ANTREA_VERSION) into $(ANTREA_DIR)"
 	git clone --depth 1 --branch $(ANTREA_VERSION) $(ANTREA_REPO) $(ANTREA_DIR)
 
-antrea: $(ANTREA_DIR)  ## Fetch the pinned Antrea source tree
+# --- Fetch -----------------------------------------------------------------
+# Single entry point for vendoring source trees. Pick which with CNI (a
+# case-insensitive comma list, or "all"); override tags with CALICO_VERSION /
+# ANTREA_VERSION. Each tree's directory existing is the marker, so a clone
+# already present is left untouched (run `make distclean` to re-fetch a tag).
+#   make fetch                                  # all (default)
+#   make fetch CNI=calico CALICO_VERSION=master
+#   make fetch CNI=Calico,antrea
+CNI ?= all
+
+fetch:  ## Fetch source trees: CNI=all|calico|antrea (comma-list ok); tags via CALICO_VERSION/ANTREA_VERSION
+	@cni="$$(echo '$(CNI)' | tr 'A-Z,' 'a-z ')"; \
+	[ "$$cni" = "all" ] && cni="calico antrea"; \
+	for c in $$cni; do \
+	  case "$$c" in \
+	    calico) $(MAKE) --no-print-directory $(CALICO_DIR) ;; \
+	    antrea) $(MAKE) --no-print-directory $(ANTREA_DIR) ;; \
+	    *) echo ">> unknown CNI '$$c' (want: all, calico, antrea)" >&2; exit 1 ;; \
+	  esac; \
+	done
 
 # --- Workspaces ------------------------------------------------------------
 # Each binary builds in its OWN workspace so the two CNI module graphs stay
@@ -127,6 +144,7 @@ antrea: $(ANTREA_DIR)  ## Fetch the pinned Antrea source tree
 # Root: the shell + the api contract + Calico's tree.
 go.work: $(CALICO_DIR)
 	@echo ">> initialising shell workspace (. + ./api + $(CALICO_DIR))"
+	rm -f $@
 	go work init . ./api $(CALICO_DIR)
 
 # Antrea engine: its module + the api contract + Antrea's tree, with Antrea's
@@ -135,6 +153,7 @@ $(ANTREA_MOD)/go.work: $(ANTREA_DIR)
 	@echo ">> initialising antrea engine workspace ($(ANTREA_MOD) + ./api + $(ANTREA_DIR))"
 	@# GOWORK pins the output to this module's own go.work; without it `go work
 	@# init` walks up, finds the root workspace, and refuses.
+	rm -f $@
 	cd $(ANTREA_MOD) && GOWORK="$(CURDIR)/$(ANTREA_MOD)/go.work" go work init . ../../api ../../$(ANTREA_DIR)
 
 # --- Build -----------------------------------------------------------------
@@ -211,17 +230,54 @@ image:  ## Build a Docker image with the engine (runs in Docker, incl. on Mac)
 test: build  ## Build, then feed a sample Request in and print the raw output
 	@echo ">> sending $(TEST_INPUT) (+ $(TEST_POLICY)) to $(BIN)"
 	@echo ">> ----- raw engine output -----"
-	@$(BIN) -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@$(BIN) bpf -json -policy $(TEST_POLICY) < $(TEST_INPUT)
 	@echo ">> ------------------------------"
 
+# PROVIDER selects the CNI engine the assertion gates evaluate with (telepathy
+# -provider): `calico` (in-process, default) or `antrea` (the out-of-process
+# bin/telepathy-engine-antrea, auto-located next to $(BIN)). The e2e/testdata corpus
+# is Calico-flavored, so `verify-all PROVIDER=antrea` only the k8s-flavored
+# cases applicable to it run. Each e2e/testdata/<case>/meta.yaml carries a `flavor`
+# (decided by apiVersion): `k8s` cases (upstream networking.k8s.io) run on every
+# engine; vendor cases (e.g. `calico`) run only on their own engine. verify-all
+# runs a case when its flavor is `k8s` or equals PROVIDER, and skips the rest.
+PROVIDER ?= calico
+
 verify: build  ## Build, then gate the topology against TEST_ASSERT (exits non-zero on a failed assertion — the CI contract)
-	@echo ">> asserting $(TEST_ASSERT) against $(TEST_INPUT) (+ $(TEST_POLICY))"
-	@$(BIN) test -assert $(TEST_ASSERT) -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@echo ">> asserting $(TEST_ASSERT) against $(TEST_INPUT) (+ $(TEST_POLICY)) [provider=$(PROVIDER)]"
+	@$(BIN) test -provider $(PROVIDER) -assert $(TEST_ASSERT) -policy $(TEST_POLICY) < $(TEST_INPUT)
+
+# Each e2e/testdata/<case>/ is a self-contained case: topology.yaml on stdin,
+# policy.yaml via -policy, assertions.yaml via -test. Runs every case and exits
+# non-zero if any case fails an assertion — the full regression contract.
+e2e/testdata_DIR ?= e2e/testdata
+
+verify-all: build  ## Build, then run `telepathy test` over every e2e/testdata/<case>/ applicable to PROVIDER (skips the rest; exits non-zero on any failure)
+	@echo ">> running $(e2e/testdata_DIR)/*/ [provider=$(PROVIDER)]"
+	@fail=0; run=0; skip=0; \
+	for d in $(e2e/testdata_DIR)/*/; do \
+		[ -f "$$d/assertions.yaml" ] || continue; \
+		flavor=$$(sed -n 's/^flavor:[[:space:]]*//p' "$$d/meta.yaml" 2>/dev/null); \
+		if [ "$$flavor" != "k8s" ] && [ "$$flavor" != "$(PROVIDER)" ]; then \
+			printf "  \033[33mSKIP\033[0m %s (flavor=%s, not applicable to $(PROVIDER))\n" "$$(basename $$d)" "$$flavor"; \
+			skip=$$((skip+1)); continue; \
+		fi; \
+		run=$$((run+1)); \
+		if $(BIN) test -provider $(PROVIDER) -assert "$$d/assertions.yaml" -policy "$$d/policy.yaml" < "$$d/topology.yaml" >/dev/null 2>&1; then \
+			printf "  \033[32mPASS\033[0m %s\n" "$$(basename $$d)"; \
+		else \
+			printf "  \033[31mFAIL\033[0m %s\n" "$$(basename $$d)"; \
+			$(BIN) test -provider $(PROVIDER) -assert "$$d/assertions.yaml" -policy "$$d/policy.yaml" < "$$d/topology.yaml" 2>&1 | grep -E "FAIL|error" | sed 's/^/        /'; \
+			fail=$$((fail+1)); \
+		fi; \
+	done; \
+	echo ">> $$((run-fail))/$$run cases passed, $$skip skipped (provider=$(PROVIDER))"; \
+	[ $$fail -eq 0 ]
 
 # DIFF_BASE / DIFF_HEAD are the two policy revisions diff-demo compares against
 # the same topology — base (frontend-only) vs a PR that opens it to every pod.
-DIFF_BASE ?= testdata/sample-policy.yaml
-DIFF_HEAD ?= testdata/sample-policy-open.yaml
+DIFF_BASE ?= e2e/testdata/sample-policy.yaml
+DIFF_HEAD ?= e2e/testdata/sample-policy-open.yaml
 
 diff-demo: build  ## Evaluate base vs PR policy on the same topology and print the connectivity diff (text + PR-comment markdown)
 	@$(BIN) -policy $(DIFF_BASE) < $(TEST_INPUT) > /tmp/telepathy-base.json
@@ -230,6 +286,34 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 	@$(BIN) diff /tmp/telepathy-base.json /tmp/telepathy-head.json
 	@echo ">> ----- diff (markdown / PR comment) -----"
 	@$(BIN) diff -format markdown /tmp/telepathy-base.json /tmp/telepathy-head.json
+
+# --- End-to-end (real cluster) ---------------------------------------------
+# Simulation is great but the actual measure should be a side by side evaluation.
+# This is where these e2e tests come in: they run a real cluster with real CNIs,
+# and compare the engine's predicted connectivity against the real connectivity
+# observed in the cluster. 
+# Testcases can be found in e2e/testdata/ folder
+CLUSTER_NAME ?= telepathy-e2e
+
+
+e2e-calico: build
+	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
+	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
+	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-up.sh
+	@lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"
+	@CLUSTER_NAME=$(CLUSTER_NAME)-calico TELEPATHY_BIN=$(abspath $(BIN)) \
+		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
+
+e2e-antrea: build  ## Stand up kind+Antrea and compare each k8s case's real connectivity against the Antrea engine
+	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
+	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
+	@CLUSTER_NAME=$(CLUSTER_NAME)-antrea ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/antrea-up.sh
+	@CLUSTER_NAME=$(CLUSTER_NAME)-antrea TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=antrea \
+		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
+
+e2e: build  ## Stand up kind+Calico and compare every e2e/testdata case's real connectivity against the engine
+	@$(MAKE) e2e-calico
+	@$(MAKE) e2e-antrea
 
 # --- Cleanup ---------------------------------------------------------------
 clean:  ## Remove build artifacts

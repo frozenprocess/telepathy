@@ -1,0 +1,33 @@
+# Single GNP filtering BOTH directions. `types: [Ingress, Egress]`
+# explicitly enables both pipelines; the matching `ingress:` and
+# `egress:` blocks each carry one Allow rule scoped to the prod
+# namespace, so:
+#
+#   - Ingress to prod is allowed only when the source namespace is prod.
+#     Everything else (dev → prod) is dropped by the implicit deny.
+#   - Egress from prod is allowed only when the destination namespace
+#     is prod. Everything else (prod → dev) is dropped by the implicit
+#     deny.
+#
+# Net effect: prod is a sealed perimeter — only intra-prod flows
+# survive. Dev is untouched (unselected), so dev<->dev keeps working.
+#
+# Compare to gnp-namespaceselector-in-set (ingress-only deny) and
+# gnp-egress-explicit-deny-then-allow (egress-only with explicit allow).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-bidir-isolation
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'prod'
+  egress:
+    - action: Allow
+      destination:
+        namespaceSelector: env == 'prod'

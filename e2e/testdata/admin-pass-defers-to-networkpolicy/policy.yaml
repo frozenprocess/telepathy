@@ -1,0 +1,65 @@
+# Three-layer composition demonstrating Pass and Deny within the Admin tier,
+# and how Pass meaningfully delegates to the NetworkPolicy tier:
+#
+#   1. Admin tier (cluster admin):
+#        - From dev → Pass  (don't decide here; let the app team's NP decide)
+#        - From everyone else → Deny  (Admin says no, final)
+#   2. NetworkPolicy tier (app team):
+#        - Allow ingress to prod/backend ONLY from dev/frontend.
+#        - Other prod pods (frontend, database) are not selected by any NP,
+#          so the NP tier doesn't fire for them.
+#
+# The matrix the model should learn:
+#   * dev/frontend → prod/backend             ALLOW  (Admin Pass → NP allows)
+#   * dev/other   → prod/backend              DENY   (Admin Pass → NP final-denies
+#                                                     a selected pod with no rule)
+#   * dev/*       → prod/database, frontend   ALLOW  (Admin Pass → no NP selects
+#                                                     them → default-allow)
+#   * prod/*      → prod/*                    DENY   (Admin Deny is final)
+#   * any         → dev/*                     ALLOW  (no policy targets dev)
+#
+# The key teaching point: Admin Pass is NOT a synonym for Admin Allow. Pass
+# means "I'm choosing not to decide" — the next tier (NetworkPolicy) gets to,
+# and crucially NP can still deny a flow that Pass deferred.
+apiVersion: policy.networking.k8s.io/v1alpha2
+kind: ClusterNetworkPolicy
+metadata:
+  name: prod-admin-pass-dev-deny-rest
+spec:
+  tier: Admin
+  priority: 10
+  subject:
+    namespaces:
+      matchLabels:
+        env: prod
+  ingress:
+    - name: pass-from-dev
+      action: Pass
+      from:
+        - namespaces:
+            matchLabels:
+              env: dev
+    - name: deny-rest
+      action: Deny
+      from:
+        - namespaces: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-from-dev-frontend
+  namespace: prod
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              env: dev
+          podSelector:
+            matchLabels:
+              app: frontend

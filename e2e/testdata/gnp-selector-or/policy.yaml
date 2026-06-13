@@ -1,0 +1,20 @@
+# Disjunction selector. `||` is Calico's OR operator; combined with the
+# parenthesized grouping it selects workloads whose app label is frontend
+# OR backend. With the `env == 'dev'` conjunct, the GNP scopes to dev
+# namespace only.
+#
+# Semantically equivalent to `app in {"frontend", "backend"}`, but
+# spelled out with `||` to exercise the OR operator path in selector
+# parsing — the docs note that `||` is a non-optimized selector while
+# `in {…}` is optimized, so they're worth distinguishing for the model.
+#
+# types: [Ingress] with no rules => implicit ingress default-deny on the
+# selected pods (dev/frontend, dev/backend).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-dev-frontend-or-backend
+spec:
+  selector: env == 'dev' && (app == 'frontend' || app == 'backend')
+  types:
+    - Ingress

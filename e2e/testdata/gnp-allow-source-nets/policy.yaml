@@ -1,0 +1,29 @@
+# CIDR-based source matching with positive include + negative exclude.
+#
+#   `source.nets`    : list of CIDRs the source IP must fall inside one of.
+#   `source.notNets` : list of CIDRs the source IP must NOT fall inside.
+#
+# Combined RFC1918 covers every reasonable pod CIDR a kind/CNI cluster
+# would assign (kind defaults to 10.244.0.0/16). 198.51.100.0/24 is
+# TEST-NET-2 from RFC 5737, reserved for documentation and never used
+# in real deployments — included here purely to demonstrate the
+# `notNets` exclusion syntax. Net effect: every pod source matches
+# `nets` and none match `notNets`, so the Allow rule fires for every
+# pod-to-prod flow.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-ingress-rfc1918-sources
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        nets:
+          - "10.0.0.0/8"
+          - "172.16.0.0/12"
+          - "192.168.0.0/16"
+        notNets:
+          - "198.51.100.0/24"

@@ -1,0 +1,18 @@
+# Spec-level `namespaceSelector` (as opposed to per-entity-rule
+# namespaceSelector): scopes the GlobalNetworkPolicy to pods whose
+# namespace matches the expression. `selector` is omitted and defaults
+# to all(), so every pod inside a matching namespace is selected.
+#
+# Kubernetes 1.22+ automatically labels every namespace with
+# `kubernetes.io/metadata.name=<namespace name>`, which is what we
+# match here with the set operator `in {…}`. Equivalent in effect to
+# the per-namespace prod-deny-all-ingress NP testcase, but expressed
+# cluster-scoped at the GNP layer.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-prod-namespace-in-set
+spec:
+  namespaceSelector: kubernetes.io/metadata.name in {"prod"}
+  types:
+    - Ingress

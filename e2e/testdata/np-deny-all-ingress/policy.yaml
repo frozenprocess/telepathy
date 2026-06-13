@@ -1,0 +1,22 @@
+# Namespaced Calico NetworkPolicy + the all() selector.
+#
+# Unlike a GlobalNetworkPolicy, a Calico NetworkPolicy is namespaced: its
+# `selector` only ever matches workload endpoints in metadata.namespace (here
+# prod). The all() match operator selects EVERY in-scope endpoint, so combined
+# with the namespace scope it means "every pod in prod".
+#
+# types: [Ingress] with no `ingress` rules invokes Calico's implicit ingress
+# default-deny on each selected pod, so all prod pods refuse every inbound
+# connection. The dev namespace carries no policy and is untouched — the
+# defining difference between a NetworkPolicy (this) and a cluster-wide
+# GlobalNetworkPolicy with selector all() (which would also lock down dev and
+# the system namespaces).
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: prod-default-deny-ingress
+  namespace: prod
+spec:
+  selector: all()
+  types:
+    - Ingress

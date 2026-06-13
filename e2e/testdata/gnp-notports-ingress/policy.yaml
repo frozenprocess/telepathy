@@ -1,0 +1,25 @@
+# destination.notPorts — allow every port EXCEPT the listed ones.
+#
+# The ingress rule allows TCP to prod pods on any port that is NOT 8080.
+# notPorts negates the port match: a packet to TCP/8080 fails the rule and
+# falls through to the types:[Ingress] default-deny, while a packet to any
+# other TCP port (e.g. 9090) matches and is allowed.
+#
+# Verified with two probes — the app probe on TCP/8080 (denied, it's the
+# excluded port) and an alt probe on TCP/9090 (allowed). This is the inverse
+# of an allow-list `ports:` rule: useful for "open everything but the admin
+# port" patterns.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-all-tcp-except-8080
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        notPorts:
+          - 8080

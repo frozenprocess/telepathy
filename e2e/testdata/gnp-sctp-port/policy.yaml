@@ -1,0 +1,26 @@
+# protocol: SCTP with a destination port.
+#
+# Calico supports SCTP (protocol number 132) as a first-class L4 protocol, with
+# the same `ports` semantics as TCP/UDP. This rule allows SCTP/9000 ingress to
+# prod pods and nothing else; the implicit ingress default-deny blocks TCP.
+#
+# SCTP shows up in telecom / signalling workloads (e.g. Diameter, S1AP). Calico
+# can gate it by port just like any other L4 protocol — the dataplane programs
+# an SCTP match rather than TCP.
+#
+# Verified with an SCTP/9000 probe (allowed) and the TCP/8080 app probe
+# (denied).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-sctp-9000
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: SCTP
+      destination:
+        ports:
+          - 9000

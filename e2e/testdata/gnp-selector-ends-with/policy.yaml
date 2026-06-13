@@ -1,0 +1,12 @@
+# Suffix-match selector. `tier ends with 'eb'` picks every workload whose
+# tier label ends in "eb" — in our topology only tier=web (the frontends).
+# types: [Ingress] with no rules => implicit ingress default-deny on the
+# selected (frontend) pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-tier-ends-with-eb
+spec:
+  selector: tier ends with 'eb'
+  types:
+    - Ingress

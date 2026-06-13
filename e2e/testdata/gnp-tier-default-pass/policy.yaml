@@ -1,0 +1,55 @@
+# User tier with `defaultAction: Pass`. When a workload is selected by a
+# policy in the tier but no rule matches the flow, the tier's
+# defaultAction decides — Pass means "fall through to the next tier
+# instead of dropping the packet here". Pods that aren't selected by any
+# policy in the tier skip the tier entirely.
+#
+# Layout:
+#   audit (order 50, defaultAction: Pass)
+#     └─ block-frontend-into-database — denies prod/database ingress
+#        from source.app=frontend; other sources fall through.
+#
+#   default (built-in, defaultAction: Deny)
+#     └─ default-allow-prod-from-dev — allows prod ingress from
+#        sources in the dev namespace.
+#
+# Evaluation per pair:
+#   - audit selects only prod/database. Pods other than prod/database
+#     skip the audit tier and land directly in the default tier.
+#   - For prod/database: frontend sources match the audit Deny → final
+#     Deny. Non-frontend sources fall through (Pass) to default tier,
+#     which allows dev sources and denies the rest.
+apiVersion: projectcalico.org/v3
+kind: Tier
+metadata:
+  name: audit
+spec:
+  order: 50
+  defaultAction: Pass
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: audit-block-frontend-into-database
+spec:
+  tier: audit
+  selector: env == 'prod' && app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        selector: app == 'frontend'
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: default-allow-prod-from-dev
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        namespaceSelector: env == 'dev'

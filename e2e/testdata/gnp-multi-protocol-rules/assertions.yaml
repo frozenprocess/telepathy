@@ -1,0 +1,102 @@
+# Connectivity assertions for 'gnp-multi-protocol-rules' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: prod/database
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/backend
+    to: prod/database
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: dev/frontend
+    to: prod/database
+    expect: deny
+    protocol: tcp
+    port: 8080
+  - from: dev/backend
+    to: prod/database
+    expect: deny
+    protocol: tcp
+    port: 8080
+  - from: dev/database
+    to: prod/database
+    expect: deny
+    protocol: tcp
+    port: 8080
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/frontend
+    to: dev/database
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/backend
+    to: prod/frontend
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/frontend
+    to: prod/database
+    expect: deny
+    protocol: udp
+    port: 8081
+  - from: prod/backend
+    to: prod/database
+    expect: deny
+    protocol: udp
+    port: 8081
+  - from: dev/frontend
+    to: prod/database
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: dev/backend
+    to: prod/database
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: dev/database
+    to: prod/database
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: prod/frontend
+    to: dev/database
+    expect: allow
+    protocol: udp
+    port: 8081
+  - from: prod/backend
+    to: prod/frontend
+    expect: allow
+    protocol: udp
+    port: 8081

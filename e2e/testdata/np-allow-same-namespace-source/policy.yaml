@@ -1,0 +1,26 @@
+# Namespaced NetworkPolicy: a rule's bare source.selector matches the SAME
+# namespace only.
+#
+# In a Calico NetworkPolicy (namespaced), a source/destination `selector`
+# WITHOUT an accompanying `namespaceSelector` is implicitly scoped to the
+# policy's own namespace — it never reaches across namespaces. Here the policy
+# lives in prod and allows ingress to prod/database from source app==frontend,
+# so prod/frontend is allowed but dev/frontend is NOT (a different namespace),
+# even though dev/frontend carries the same app=frontend label.
+#
+# This is the key behavioural difference from a GlobalNetworkPolicy, whose
+# selectors are cluster-wide; to allow dev/frontend you would have to add an
+# explicit source.namespaceSelector (see np-allow-from-namespaceselector).
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: prod-database-allow-frontend-same-ns
+  namespace: prod
+spec:
+  selector: app == 'database'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        selector: app == 'frontend'

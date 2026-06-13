@@ -1,0 +1,20 @@
+# `source.notSelector` is the negative complement of `source.selector`
+# inside an entity rule: the rule matches when the source does NOT
+# satisfy the expression. Useful when "everything except X" is shorter
+# to express than the positive set.
+#
+# Here: prod ingress is allowed when the source is anything except a
+# database pod. Database sources fall through to the implicit deny
+# created by types: [Ingress] on the selected env=prod pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-ingress-non-database-source
+spec:
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      source:
+        notSelector: app == 'database'

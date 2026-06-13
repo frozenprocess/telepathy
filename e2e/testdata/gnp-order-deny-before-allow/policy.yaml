@@ -1,0 +1,39 @@
+# Two GNPs in the same tier (default), distinguished by `spec.order`.
+# Calico walks policies in a tier in ascending order; rules from the
+# first-evaluated policy can decide a flow before the second policy
+# ever sees it.
+#
+# policy-a (order 100): selective Deny — fires only for source.app=database.
+# policy-b (order 200): blanket Allow.
+#
+# A database source matches policy-a's Deny → final → never reaches
+# policy-b. A non-database source misses policy-a's rule → continues to
+# policy-b → catch-all Allow fires. Reversing the order values (so
+# policy-b is at 100 and policy-a at 200) would shadow the Deny: every
+# flow would hit the catch-all Allow first and the Deny would be dead
+# code.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-deny-from-database
+spec:
+  order: 100
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        selector: app == 'database'
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: prod-allow-from-any
+spec:
+  order: 200
+  selector: env == 'prod'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow

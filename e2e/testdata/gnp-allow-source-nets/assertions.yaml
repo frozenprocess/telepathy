@@ -1,0 +1,17 @@
+# Connectivity assertions for 'gnp-allow-source-nets' (derived from the testcase intent).
+assertions:
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+  - from: prod/frontend
+    to: prod/database
+    expect: allow
+  - from: prod/frontend
+    to: dev/frontend
+    expect: allow
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+  - from: prod/frontend
+    to: dev/database
+    expect: allow

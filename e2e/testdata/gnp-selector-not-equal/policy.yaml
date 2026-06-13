@@ -1,0 +1,16 @@
+# Inequality selector. `tier != 'web'` matches any workload whose tier
+# label has a value other than "web" (or whose tier label is absent
+# entirely). Combined with `env == 'prod'` it narrows to prod pods that
+# are not in the web tier — backend (tier=app) and database (tier=data).
+# `&&` is the conjunction operator; both terms must match.
+#
+# types: [Ingress] with no rules => implicit ingress default-deny on
+# the selected pods (prod/backend, prod/database).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-ingress-prod-non-web
+spec:
+  selector: env == 'prod' && tier != 'web'
+  types:
+    - Ingress

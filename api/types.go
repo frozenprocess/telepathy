@@ -153,6 +153,15 @@ type ServiceInput struct {
 	Namespace string            `json:"namespace"`
 	Selector  map[string]string `json:"selector,omitempty"`
 	Ports     []ServicePort     `json:"ports,omitempty"`
+
+	// Type is the Kubernetes Service type: "" / "ClusterIP" (default) or
+	// "NodePort". The engine treats every Service as ClusterIP semantics
+	// (a svc/<ns>/<name> column reachable iff a backend pod is) and ignores
+	// Type — it does not model NodePort DNAT. Type exists for the e2e harness,
+	// which realizes a NodePort Service so an off-cluster observer can reach a
+	// backend via node-IP:nodePort (the only externally routable path, used by
+	// preDNAT/NodePort test cases).
+	Type string `json:"type,omitempty"`
 }
 
 type ServicePort struct {
@@ -160,6 +169,11 @@ type ServicePort struct {
 	Port       int    `json:"port"`
 	Protocol   string `json:"protocol,omitempty"`
 	TargetPort string `json:"targetPort,omitempty"`
+
+	// NodePort is the externally reachable port on every node, used only when
+	// the Service Type is NodePort. 0 lets Kubernetes auto-assign (the harness
+	// reads the assigned value back). Like Type, the engine ignores this.
+	NodePort int `json:"nodePort,omitempty"`
 }
 
 type EndpointSliceInput struct {

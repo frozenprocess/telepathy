@@ -1,0 +1,86 @@
+# Topology for testcase 'gnp-hep-prednat-nodeport-block-external'.
+#
+# Intent: a true preDNAT/NodePort host firewall. A backend pod is fronted by a
+# NodePort Service. Two off-cluster observers reach it via <node-IP>:<nodePort>:
+# one whose source CIDR is denied by a preDNAT GlobalNetworkPolicy on a
+# wildcard-interface HostEndpoint (per node), one that is allowed. preDNAT is
+# evaluated BEFORE kube-proxy DNAT, on the node the traffic enters, so the deny
+# fires on the original external source — exactly what preDNAT is for.
+#
+# A source-CIDR discriminator is used on purpose: it is invariant under DNAT, so
+# the engine (which models the flow to the backend pod) and the dataplane (which
+# sees node-IP:nodePort before DNAT) agree on the verdict without the engine
+# needing to model NodePort/DNAT.
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+endpoints:
+  # Backend behind the NodePort Service.
+  - id: prod/web
+    namespace: prod
+    name: web
+    ip: 10.0.0.10
+    labels:
+      app: web
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+    node: telepathy-e2e-calico-worker
+  # Off-cluster observer whose source CIDR the preDNAT policy DENIES. IP is a
+  # documentation-range placeholder; the harness rewrites it to the observer
+  # container's real address on the kind network (and rewrites the policy's
+  # source nets to match).
+  - id: world/blocked
+    namespace: world
+    name: blocked
+    ip: 203.0.113.5
+    role: external
+    unpoliced: true
+    labels:
+      scope: internet
+  # Off-cluster observer the preDNAT policy ALLOWS (different source CIDR).
+  - id: world/allowed
+    namespace: world
+    name: allowed
+    ip: 198.51.100.7
+    role: external
+    unpoliced: true
+    labels:
+      scope: internet
+services:
+  - name: web-np
+    namespace: prod
+    type: NodePort
+    selector:
+      app: web
+    ports:
+      - port: 8080
+        protocol: tcp
+        targetPort: "8080"
+        nodePort: 30080
+hostEndpoints:
+  - name: prednat-worker
+    node: telepathy-e2e-calico-worker
+    interfaceName: "*"
+    expectedIPs:
+      - 172.18.0.4
+    labels:
+      role: prednat-fw
+  - name: prednat-worker2
+    node: telepathy-e2e-calico-worker2
+    interfaceName: "*"
+    expectedIPs:
+      - 172.18.0.2
+    labels:
+      role: prednat-fw
+port: 8080
+protocol: tcp
