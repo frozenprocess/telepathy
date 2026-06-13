@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
 // bpf.go renders the eBPF *policy program* Felix would JIT-assemble for each
 // endpoint, reusing the same calc graph Evaluate/RenderIptables use

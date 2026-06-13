@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# Two-stage build for calico-engine.
+# Two-stage build for telepathy.
 #
 #   stage 1 (build):   compile the Linux engine binary with the project Makefile
 #   stage 2 (runtime): copy just the static binary into a minimal base image
@@ -44,6 +44,6 @@ RUN make build
 # for a statically linked Go binary. The engine is a stdin->stdout filter.
 FROM scratch
 
-COPY --from=build /src/bin/calico-engine /usr/local/bin/calico-engine
+COPY --from=build /src/bin/telepathy /usr/local/bin/telepathy
 
-ENTRYPOINT ["/usr/local/bin/calico-engine"]
+ENTRYPOINT ["/usr/local/bin/telepathy"]

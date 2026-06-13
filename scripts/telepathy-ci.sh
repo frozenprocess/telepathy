@@ -15,7 +15,7 @@
 #
 # telepathy-ci.sh — the body of the Telepathy GitHub Action (action.yml).
 #
-# It drives the calico-engine Docker image to do two things in a CI run:
+# It drives the telepathy Docker image to do two things in a CI run:
 #
 #   test  — gate the topology against an assertions file (fails the job on a
 #           failed assertion).
@@ -44,7 +44,7 @@ SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 mkdir -p "$OUT"
 
 # run_engine invokes the engine image over the mounted workspace. The image
-# entrypoint IS the binary, so the arguments here are calico-engine arguments.
+# entrypoint IS the binary, so the arguments here are telepathy arguments.
 # Output is captured by the caller's redirect (host-side), so produced files are
 # owned by the runner, not root.
 run_engine() {

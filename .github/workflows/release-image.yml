@@ -1,6 +1,6 @@
 name: Release image
 
-# Publish the calico-engine image to GHCR so the Telepathy Action's default
+# Publish the telepathy image to GHCR so the Telepathy Action's default
 # image (ghcr.io/<owner>/<repo>:latest) exists for consumers. Runs on version
 # tags (v*) and can be triggered manually.
 on:

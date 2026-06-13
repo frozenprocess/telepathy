@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
 import (
 	"fmt"
@@ -32,7 +32,7 @@ import (
 	libnet "github.com/projectcalico/calico/libcalico-go/lib/net"
 )
 
-const hostname = "calico-engine-node"
+const hostname = "telepathy-node"
 
 // Evaluate runs one connectivity sweep. It builds a fresh calc graph from the
 // (Endpoints, Namespaces, Policies, …) tuple in req, then probes every

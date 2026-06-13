@@ -15,16 +15,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package engine is the importable library form of calico-engine. The CLI in
-// the sibling main package is now a thin stdin->Evaluate->stdout shim around
-// it; servers (e.g. ../../editor) import this package directly to avoid the
-// per-request fork/exec.
+// Package api is the vendor-neutral contract shared by every CNI provider. It
+// defines the wire schema — Request (topology + policies + probe) and Response
+// (the connectivity matrix) — plus the provider-agnostic operations that work
+// purely on that schema: decoding (DecodeRequest/DecodeResponse/
+// ParsePolicyManifests), connectivity diffing (DiffResponses), and assertion
+// checking (RunAssertions). It imports no CNI-specific code; a provider (e.g.
+// provider/calico) imports this package, not the other way round.
 //
-// Evaluate is not goroutine-safe: Felix's calc graph carries process-wide
-// singletons. Callers in shared-process environments must serialise calls
-// (sync.Mutex is fine; the per-call cost dominates lock contention at any
-// realistic editor load).
-package engine
+// The actual policy evaluation lives behind the provider.Provider interface;
+// RunAssertions takes the chosen provider's Evaluate as a function argument so
+// this package stays free of any provider dependency. Evaluation itself is not
+// guaranteed goroutine-safe (Calico's Felix calc graph carries process-wide
+// singletons), so callers in shared-process environments must serialise calls.
+package api
+
+// Capability describes one policy feature or resource kind a provider honors.
+// A provider returns its set from Provider.Capabilities; callers (and lint) use
+// it to discover the feature surface before trusting a verdict. The shape is
+// neutral; the entries are provider-specific.
+type Capability struct {
+	Name      string `json:"name"`
+	Supported bool   `json:"supported"`
+	Notes     string `json:"notes,omitempty"`
+}
 
 // EndpointPort declares a named port on an endpoint, so policies that
 // reference ports by name (e.g. `ports: [http]`) resolve to a concrete
@@ -105,12 +119,12 @@ type ServiceAccountInput struct {
 // applies each overlay where it makes semantic sense (see eval.go). Node ties
 // HEPs to workloads on the same node for the forward/preDNAT overlays.
 type HostEndpointInput struct {
-	ID                    string            `json:"id"`
-	Name                  string            `json:"name"`
-	Node                  string            `json:"node,omitempty"`
-	InterfaceName         string            `json:"interfaceName,omitempty"`
-	ExpectedIPs           []string          `json:"expectedIPs"`
-	Labels                map[string]string `json:"labels,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Node          string            `json:"node,omitempty"`
+	InterfaceName string            `json:"interfaceName,omitempty"`
+	ExpectedIPs   []string          `json:"expectedIPs"`
+	Labels        map[string]string `json:"labels,omitempty"`
 }
 
 // NetworkSetInput models a namespaced Calico NetworkSet (a bag of CIDRs +
@@ -181,11 +195,11 @@ type Request struct {
 
 	// Optional probe knobs. Defaults preserve pre-extension behaviour:
 	//   SrcPort 12345, HTTP fields nil, ICMP type/code nil.
-	SrcPort    int     `json:"srcPort,omitempty"`
-	HTTPMethod string  `json:"httpMethod,omitempty"`
-	HTTPPath   string  `json:"httpPath,omitempty"`
-	ICMPType   *int    `json:"icmpType,omitempty"`
-	ICMPCode   *int    `json:"icmpCode,omitempty"`
+	SrcPort    int    `json:"srcPort,omitempty"`
+	HTTPMethod string `json:"httpMethod,omitempty"`
+	HTTPPath   string `json:"httpPath,omitempty"`
+	ICMPType   *int   `json:"icmpType,omitempty"`
+	ICMPCode   *int   `json:"icmpCode,omitempty"`
 
 	// Optional topology and resource extensions. Each is forwarded to the
 	// calc graph through libcalico-go updateprocessors so rules that
@@ -232,10 +246,12 @@ type Response struct {
 // Actor is the typed description of one Matrix row/col. Kind is derived from
 // the input (Endpoint.Role for workload endpoints, always "hep" for a
 // HostEndpoint):
-//   "workload"       — a cluster pod
-//   "external"       — an off-cluster destination (the internet, a partner API)
-//   "hep"            — a Calico HostEndpoint (policed node interface)
-//   "host-unpoliced" — a node with no HostEndpoint (Unpoliced; host-default-allow)
+//
+//	"workload"       — a cluster pod
+//	"external"       — an off-cluster destination (the internet, a partner API)
+//	"hep"            — a Calico HostEndpoint (policed node interface)
+//	"host-unpoliced" — a node with no HostEndpoint (Unpoliced; host-default-allow)
+//
 // Internet is this actor's egress posture toward the external actors for the
 // evaluated probe: "allow" if it reaches any external, "deny" if none, "" when
 // there are no external actors (n/a) or the actor is itself external. Callers

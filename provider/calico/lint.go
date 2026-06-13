@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
 import (
 	"fmt"
@@ -23,18 +23,6 @@ import (
 
 	"sigs.k8s.io/yaml"
 )
-
-// Capability is one engine feature, with notes the caller (or a dataset
-// linter) can use to decide whether a given policy YAML is safely evaluable.
-// Supported=true means the engine honors the feature at evaluation time;
-// Supported=false means the engine accepts the manifest but does NOT enforce
-// the listed sub-feature (e.g. ICMP type/code is parsed but ignored by the
-// checker — surfacing this prevents silent dataset poisoning).
-type Capability struct {
-	Name      string `json:"name"`
-	Supported bool   `json:"supported"`
-	Notes     string `json:"notes,omitempty"`
-}
 
 // Capabilities returns the static set of features this engine honors. Callers
 // (notably the policy_llm harness) can use this to lint policies before
@@ -281,4 +269,3 @@ func hasNamedPortRef(y string) bool {
 	}
 	return false
 }
-

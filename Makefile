@@ -1,4 +1,4 @@
-# calico-engine — build orchestration.
+# telepathy — build orchestration.
 #
 # The engine is its own Go module that builds against the *untouched* Calico
 # source tree. We clone Calico at a pinned tag into third_party/calico and tie
@@ -14,7 +14,22 @@
 CALICO_REPO    ?= https://github.com/projectcalico/calico.git
 CALICO_VERSION ?= v3.32.0
 CALICO_DIR     ?= third_party/calico
-BIN            ?= bin/calico-engine
+
+# Antrea source tree — the second CNI provider. Vendored alongside Calico and
+# linked into the same binary via the go.work workspace (see go.work target).
+ANTREA_REPO    ?= https://github.com/antrea-io/antrea.git
+ANTREA_VERSION ?= v2.6.1
+ANTREA_DIR     ?= third_party/antrea
+
+# controller-runtime must be pinned to Antrea v2.6.1's version: Calico v3.32.0
+# pulls v0.23.x but Antrea's vendored multicluster webhook code uses the older
+# v0.21.0 NewWebhookManagedBy signature, and the two are NOT source-compatible.
+# Default MVS picks the higher version and Antrea fails to compile; pinning DOWN
+# to v0.21.0 builds both (verified: Calico still compiles and passes tests).
+# Revisit if a future Calico bump needs a v0.23-only controller-runtime API.
+CR_PIN_VERSION ?= v0.21.0
+
+BIN            ?= bin/telepathy
 
 # Docker build environment. GO_VERSION tracks .go-version so the container
 # toolchain matches what the repo pins; override either var to retarget.
@@ -34,7 +49,7 @@ TARGET_ARCH    ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm6
 # under Docker (incl. on Apple Silicon Macs); set e.g.
 # PLATFORM=linux/amd64,linux/arm64 for a multi-arch build (requires buildx +
 # --push, since multi-arch images can't be loaded into the local daemon).
-IMAGE_NAME     ?= calico-engine
+IMAGE_NAME     ?= telepathy
 IMAGE_TAG      ?= $(ENGINE_VERSION)
 IMAGE          ?= $(IMAGE_NAME):$(IMAGE_TAG)
 PLATFORM       ?= linux/$(TARGET_ARCH)
@@ -44,7 +59,7 @@ PLATFORM       ?= linux/$(TARGET_ARCH)
 # locally and must go to a registry).
 OUTPUT         ?= --load
 
-# Version stamped into the binary (surfaced by `calico-engine --version`).
+# Version stamped into the binary (surfaced by `telepathy --version`).
 # ENGINE_VERSION falls back to `git describe` when this repo has tags.
 ENGINE_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GIT_COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
@@ -59,7 +74,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-docker image test calico clean distclean
+.PHONY: help all build build-docker image test calico antrea clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -78,7 +93,7 @@ all: build  ## Build everything (default of `make all`)
 # comment and prints them. To list a new target here, just add `## description`
 # after its prerequisites.
 help:  ## Show this help
-	@echo "calico-engine — available targets:"
+	@echo "telepathy — available targets:"
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort \
@@ -95,15 +110,26 @@ $(CALICO_DIR):
 
 calico: $(CALICO_DIR)  ## Fetch the pinned Calico source tree
 
+# --- Antrea source ---------------------------------------------------------
+# Shallow clone of the pinned Antrea tag, vendored the same way as Calico.
+$(ANTREA_DIR):
+	@echo ">> cloning $(ANTREA_REPO) @ $(ANTREA_VERSION) into $(ANTREA_DIR)"
+	git clone --depth 1 --branch $(ANTREA_VERSION) $(ANTREA_REPO) $(ANTREA_DIR)
+
+antrea: $(ANTREA_DIR)  ## Fetch the pinned Antrea source tree
+
 # --- Workspace -------------------------------------------------------------
-# go.work makes the engine module (.) build against the local Calico checkout
-# instead of a versioned dependency. Created once; left alone if it exists.
-go.work: $(CALICO_DIR)
-	@echo ">> initialising go workspace (. + $(CALICO_DIR))"
-	go work init . $(CALICO_DIR)
+# go.work makes the engine module (.) build against the local Calico + Antrea
+# checkouts instead of versioned dependencies, and pins controller-runtime to
+# the version both trees compile against (see CR_PIN_VERSION). Recreated to stay
+# in sync with these vars; the file is generated (gitignored), not edited.
+go.work: $(CALICO_DIR) $(ANTREA_DIR)
+	@echo ">> initialising go workspace (. + $(CALICO_DIR) + $(ANTREA_DIR))"
+	go work init . $(CALICO_DIR) $(ANTREA_DIR)
+	go work edit -replace sigs.k8s.io/controller-runtime=sigs.k8s.io/controller-runtime@$(CR_PIN_VERSION)
 
 # --- Build -----------------------------------------------------------------
-build: $(CALICO_DIR) go.work  ## Clone Calico (if needed), create go.work, build the binary
+build: $(CALICO_DIR) $(ANTREA_DIR) go.work  ## Clone Calico + Antrea (if needed), create go.work, build the binary
 	@mkdir -p $(dir $(BIN))
 	@echo ">> building $(BIN)"
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
@@ -147,9 +173,9 @@ build-docker:  ## Build the binary inside a Docker container (no host Go needed)
 # Linux-only binary. Version metadata is computed here (host has .git) and
 # passed in as build args.
 #
-#   make image                         # tag calico-engine:<version>, host arch
+#   make image                         # tag telepathy:<version>, host arch
 #   make image IMAGE=myrepo/engine:dev # custom name/tag
-#   docker run --rm -i calico-engine:<version> -policy /p.yaml < topo.yaml
+#   docker run --rm -i telepathy:<version> -policy /p.yaml < topo.yaml
 image:  ## Build a Docker image with the engine (runs in Docker, incl. on Mac)
 	@echo ">> building image $(IMAGE) for $(PLATFORM)"
 	docker build \
@@ -192,5 +218,5 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 clean:  ## Remove build artifacts
 	rm -rf bin
 
-distclean: clean  ## Also remove the Calico checkout and go.work
-	rm -rf $(CALICO_DIR) go.work go.work.sum
+distclean: clean  ## Also remove the Calico + Antrea checkouts and go.work
+	rm -rf $(CALICO_DIR) $(ANTREA_DIR) go.work go.work.sum

@@ -22,7 +22,7 @@ inputs:
     required: false
     default: "auto"
   image:
-    description: "calico-engine Docker image to run."
+    description: "telepathy Docker image to run."
     required: false
     default: "ghcr.io/frozenprocess/telepathy:latest"
   base-ref:

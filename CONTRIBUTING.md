@@ -110,7 +110,7 @@ file under `engine/` with a corresponding test file.
 
 Open a [GitHub issue](https://github.com/frozenprocess/telepathy/issues) with:
 
-- The `calico-engine version` output
+- The `telepathy version` output
 - The topology and policy YAML that triggers the bug (redact anything sensitive)
 - The observed output and what you expected instead
 

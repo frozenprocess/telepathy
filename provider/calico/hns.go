@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
 // hns.go renders the Windows HNS (Host Networking Service) ACL policies Felix
 // would program for each workload endpoint, reusing the same calc graph

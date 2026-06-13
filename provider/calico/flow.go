@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
 import (
 	"net"
@@ -35,15 +35,15 @@ import (
 // "don't constrain", matching what a real Dikastes evaluator does for an
 // L3/L4-only flow.
 type flow struct {
-	srcIP, dstIP        net.IP
-	srcPort, dstPort    int
-	protocol            int
-	httpMethod          *string
-	httpPath            *string
-	srcPrincipal        *string
-	dstPrincipal        *string
-	srcLabels           map[string]string
-	dstLabels           map[string]string
+	srcIP, dstIP     net.IP
+	srcPort, dstPort int
+	protocol         int
+	httpMethod       *string
+	httpPath         *string
+	srcPrincipal     *string
+	dstPrincipal     *string
+	srcLabels        map[string]string
+	dstLabels        map[string]string
 }
 
 func (f *flow) GetSourceIP() net.IP                { return f.srcIP }
@@ -101,7 +101,9 @@ func protocolHasL4Ports(p int) bool {
 
 // spiffePrincipal builds the SPIFFE-style URI Calico's app-policy/checker
 // uses to identify a workload by service account, of the form
-//   spiffe://cluster.local/ns/<namespace>/sa/<serviceAccount>
+//
+//	spiffe://cluster.local/ns/<namespace>/sa/<serviceAccount>
+//
 // Returns nil when either component is empty so the checker treats the
 // peer as "unidentified" rather than matching a bogus SA.
 func spiffePrincipal(namespace, serviceAccount string) *string {

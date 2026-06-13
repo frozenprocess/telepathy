@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command calico-engine is an in-process evaluator for Kubernetes/Calico
+// Command telepathy is an in-process evaluator for Kubernetes/Calico
 // network policies. Given a topology (endpoints + namespaces) and one or more
 // policy manifests, it computes the pod-to-pod connectivity matrix WITHOUT a
 // cluster, by reusing Calico's own code (libcalico-go conversion /
@@ -34,33 +34,36 @@
 //
 // Subcommands:
 //
-//	calico-engine            evaluate connectivity (default; Request in,
+//	telepathy            evaluate connectivity (default; Request in,
 //	                         JSON Response out — the harness contract).
-//	calico-engine test       gate a topology against a connectivity test file
+//	telepathy test       gate a topology against a connectivity test file
 //	                         (-assert FILE): each {from,to,expect} flow is
 //	                         checked and the command exits non-zero if any
 //	                         assertion fails — the CI contract. -json emits the
 //	                         structured AssertionReport instead of TAP-ish text.
-//	calico-engine diff       compare two evaluate Responses (BASE.json HEAD.json)
+//	telepathy diff       compare two evaluate Responses (BASE.json HEAD.json)
 //	                         and report the flows that changed — opened
 //	                         (deny->allow), closed (allow->deny), added, removed.
 //	                         -format markdown emits a PR-comment table; -json the
 //	                         structured DiffReport. With -exit-code, exits non-zero
 //	                         when any flow changed (git diff --exit-code style).
-//	calico-engine iptables   render the iptables/nftables chains Felix would
+//	telepathy iptables   render the iptables/nftables chains Felix would
 //	                         program for the same Request. Text output by
 //	                         default; -json for the structured form.
-//	calico-engine bpf        render the eBPF policy program Felix would
+//	telepathy bpf        render the eBPF policy program Felix would
 //	                         JIT-assemble per endpoint+direction for the same
 //	                         Request (annotated disassembly).
-//	calico-engine version    print the engine version, the pinned Calico
+//	telepathy version    print the engine version, the pinned Calico
 //	                         version it is built against, and its capabilities
 //	                         (also reachable as --version / -version).
 //
-// All semantics live in the importable ./engine subpackage; this binary is
-// a CLI shim around engine.Evaluate / engine.RenderIptables so callers like
-// the policy_llm harness keep working unchanged. Servers that want to avoid
-// per-request fork/exec can import ./engine directly (see ../editor/).
+// The vendor-neutral request/response schema lives in the importable ./api
+// package; each CNI's policy engine lives behind the provider.Provider
+// interface in ./provider (the Calico engine in ./provider/calico). This binary
+// is a CLI shim that selects a provider (-provider, default calico) and calls
+// Provider.Evaluate / the provider's dataplane renderers, so callers like the
+// policy_llm harness keep working unchanged. Servers that want to avoid
+// per-request fork/exec can import ./api + ./provider/calico directly.
 package main
 
 import (
@@ -75,8 +78,42 @@ import (
 
 	logrus "github.com/sirupsen/logrus"
 
-	"github.com/frozenprocess/telepathy/engine"
+	"github.com/frozenprocess/telepathy/api"
+	"github.com/frozenprocess/telepathy/provider"
+	"github.com/frozenprocess/telepathy/provider/calico"
 )
+
+// dataplaneRenderer is the optional capability the iptables/bpf/hns subcommands
+// require. Its types are Calico-specific (Felix renders iptables/nftables/bpf/
+// hns; another CNI would render its own dataplane), so the interface lives here
+// in the CLI rather than in the provider package, and the selected provider is
+// type-asserted against it.
+type dataplaneRenderer interface {
+	RenderIptables(api.Request, calico.IptablesOptions) calico.IptablesResponse
+	RenderBPF(api.Request, calico.BPFOptions) calico.BPFResponse
+	RenderHNS(api.Request, calico.HNSOptions) calico.HNSResponse
+}
+
+// mustProvider resolves a registered provider by name or exits with a usage
+// error listing the available providers.
+func mustProvider(name string) provider.Provider {
+	p, ok := provider.Get(name)
+	if !ok {
+		fail("unknown -provider %q (have: %s)", name, strings.Join(provider.List(), ", "))
+	}
+	return p
+}
+
+// mustDataplaneRenderer resolves the provider and asserts it can render
+// dataplane artifacts, failing cleanly when it cannot.
+func mustDataplaneRenderer(name string) dataplaneRenderer {
+	p := mustProvider(name)
+	dr, ok := p.(dataplaneRenderer)
+	if !ok {
+		fail("provider %q does not render dataplane artifacts", name)
+	}
+	return dr
+}
 
 // Build metadata. The defaults keep `--version` meaningful for a plain
 // `go build .` / `go run .`; the Makefile overrides them via -ldflags so a
@@ -88,7 +125,7 @@ import (
 //	  -X main.gitCommit=$(git rev-parse --short HEAD) \
 //	  -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
 var (
-	// engineVersion is the calico-engine binary's own version.
+	// engineVersion is the telepathy binary's own version.
 	engineVersion = "dev"
 	// calicoVersion is the Calico source tree the engine is built against
 	// (the pinned tag in third_party/calico — see Makefile CALICO_VERSION).
@@ -117,7 +154,7 @@ var capabilities = []capability{
 // reached by the top-level `version` subcommand and the `--version`/`-version`
 // flags.
 func printVersion() {
-	fmt.Printf("calico-engine %s\n", engineVersion)
+	fmt.Printf("telepathy %s\n", engineVersion)
 	fmt.Printf("  built against Calico %s\n", calicoVersion)
 	fmt.Printf("  go      %s\n", runtime.Version())
 	fmt.Printf("  commit  %s\n", gitCommit)
@@ -167,12 +204,13 @@ func main() {
 		return
 	}
 
-	fs := flag.NewFlagSet("calico-engine", flag.ExitOnError)
-	policies := addRequestFlags(fs)
+	fs := flag.NewFlagSet("telepathy", flag.ExitOnError)
+	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
+	p := mustProvider(*prov)
 	req := loadRequest(*policies)
-	resp := engine.Evaluate(req)
+	resp := p.Evaluate(req)
 	if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
 		fail("encode response: %v", err)
 	}
@@ -185,23 +223,26 @@ func (s *stringSlice) String() string     { return strings.Join(*s, ",") }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
 
 // addRequestFlags registers the input flags shared by every subcommand and
-// returns the slice the -policy values land in.
-func addRequestFlags(fs *flag.FlagSet) *stringSlice {
+// returns the slice the -policy values land in plus the selected -provider
+// name (default "calico"). -provider chooses which CNI engine evaluates the
+// Request; the default preserves the original Calico-only behaviour.
+func addRequestFlags(fs *flag.FlagSet) (*stringSlice, *string) {
 	var policies stringSlice
 	fs.Var(&policies, "policy", "raw policy manifest YAML file or directory to append to the stdin Request (repeatable)")
-	return &policies
+	prov := fs.String("provider", "calico", "CNI policy engine to evaluate with (e.g. calico)")
+	return &policies, prov
 }
 
 // loadRequest builds the Request: decode stdin (JSON or YAML, when piped), then
 // append every policy parsed from the -policy files/directories. Stdin and
 // -policy compose — stdin carries the topology, -policy adds manifests — but
 // either may be omitted.
-func loadRequest(policyPaths []string) engine.Request {
+func loadRequest(policyPaths []string) api.Request {
 	data, err := readPipedStdin()
 	if err != nil {
 		fail("read stdin: %v", err)
 	}
-	req, err := engine.DecodeRequest(data)
+	req, err := api.DecodeRequest(data)
 	if err != nil {
 		fail("%v", err)
 	}
@@ -215,7 +256,7 @@ func loadRequest(policyPaths []string) engine.Request {
 			if err != nil {
 				fail("read policy %s: %v", f, err)
 			}
-			req.Policies = append(req.Policies, engine.ParsePolicyManifests(b)...)
+			req.Policies = append(req.Policies, api.ParsePolicyManifests(b)...)
 		}
 	}
 	return req
@@ -259,7 +300,7 @@ func expandPolicyPath(path string) ([]string, error) {
 	return files, nil
 }
 
-// runIptables implements `calico-engine iptables`: read the same JSON Request
+// runIptables implements `telepathy iptables`: read the same JSON Request
 // from stdin, render the dataplane chains, print them.
 func runIptables(args []string) {
 	fs := flag.NewFlagSet("iptables", flag.ExitOnError)
@@ -267,12 +308,13 @@ func runIptables(args []string) {
 	ipv := fs.String("ipversion", "", "IP version(s) to render: 4 | 6 | both (default: inferred from endpoints)")
 	noStatic := fs.Bool("no-static", false, "omit Felix's static top-level chains (cali-INPUT/FORWARD/OUTPUT); show only policy/endpoint/profile chains")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies := addRequestFlags(fs)
+	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
+	dr := mustDataplaneRenderer(*prov)
 	req := loadRequest(*policies)
 
-	opts := engine.IptablesOptions{IncludeStatic: !*noStatic}
+	opts := calico.IptablesOptions{IncludeStatic: !*noStatic}
 	switch *backend {
 	case "both":
 		opts.Backends = []string{"iptables", "nftables"}
@@ -294,7 +336,7 @@ func runIptables(args []string) {
 		fail("unknown -ipversion %q (want 4|6|both)", *ipv)
 	}
 
-	resp := engine.RenderIptables(req, opts)
+	resp := dr.RenderIptables(req, opts)
 
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
@@ -308,7 +350,7 @@ func runIptables(args []string) {
 // formatIptables renders the response as human-readable text: an
 // `iptables-restore`-style block per (backend, ipVersion), warnings/errors
 // surfaced as comments at the top.
-func formatIptables(resp engine.IptablesResponse) string {
+func formatIptables(resp calico.IptablesResponse) string {
 	var b strings.Builder
 	for _, w := range resp.Warnings {
 		fmt.Fprintf(&b, "# WARNING: %s\n", w)
@@ -332,7 +374,7 @@ func formatIptables(resp engine.IptablesResponse) string {
 	return b.String()
 }
 
-// runBPF implements `calico-engine bpf`: read the same JSON Request from
+// runBPF implements `telepathy bpf`: read the same JSON Request from
 // stdin, render each endpoint's eBPF policy program, print the annotated
 // disassembly. Renders all endpoints + both directions by default; -endpoint
 // and -direction narrow that.
@@ -342,12 +384,13 @@ func runBPF(args []string) {
 	dir := fs.String("direction", "both", "direction(s) to render: ingress | egress | both")
 	ipv := fs.String("ipversion", "", "IP version(s) to render: 4 | 6 | both (default: inferred from endpoints)")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies := addRequestFlags(fs)
+	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
+	dr := mustDataplaneRenderer(*prov)
 	req := loadRequest(*policies)
 
-	var opts engine.BPFOptions
+	var opts calico.BPFOptions
 	if *endpoint != "" {
 		opts.Endpoints = []string{*endpoint}
 	}
@@ -372,7 +415,7 @@ func runBPF(args []string) {
 		fail("unknown -ipversion %q (want 4|6|both)", *ipv)
 	}
 
-	resp := engine.RenderBPF(req, opts)
+	resp := dr.RenderBPF(req, opts)
 
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
@@ -385,7 +428,7 @@ func runBPF(args []string) {
 
 // formatBPF renders the response as text: one annotated program block per
 // (endpoint, direction, ipVersion).
-func formatBPF(resp engine.BPFResponse) string {
+func formatBPF(resp calico.BPFResponse) string {
 	var b strings.Builder
 	for _, w := range resp.Warnings {
 		fmt.Fprintf(&b, "# WARNING: %s\n", w)
@@ -413,7 +456,7 @@ func formatBPF(resp engine.BPFResponse) string {
 	return b.String()
 }
 
-// runHNS implements `calico-engine hns`: read the same JSON Request from
+// runHNS implements `telepathy hns`: read the same JSON Request from
 // stdin, render each endpoint's Windows HNS ACL list, print it. Renders all
 // endpoints + both directions by default; -endpoint and -direction narrow that.
 // HNS is IPv4-only, so there is no -ipversion flag.
@@ -422,12 +465,13 @@ func runHNS(args []string) {
 	endpoint := fs.String("endpoint", "", "only render endpoints whose ID contains this substring (default: all)")
 	dir := fs.String("direction", "both", "direction(s) to render: ingress | egress | both")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies := addRequestFlags(fs)
+	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
+	dr := mustDataplaneRenderer(*prov)
 	req := loadRequest(*policies)
 
-	var opts engine.HNSOptions
+	var opts calico.HNSOptions
 	if *endpoint != "" {
 		opts.Endpoints = []string{*endpoint}
 	}
@@ -440,7 +484,7 @@ func runHNS(args []string) {
 		fail("unknown -direction %q (want ingress|egress|both)", *dir)
 	}
 
-	resp := engine.RenderHNS(req, opts)
+	resp := dr.RenderHNS(req, opts)
 
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
@@ -453,7 +497,7 @@ func runHNS(args []string) {
 
 // formatHNS renders the response as text: one ACL block per (endpoint,
 // direction), each rule on its own line in priority order.
-func formatHNS(resp engine.HNSResponse) string {
+func formatHNS(resp calico.HNSResponse) string {
 	var b strings.Builder
 	for _, w := range resp.Warnings {
 		fmt.Fprintf(&b, "# WARNING: %s\n", w)
@@ -483,7 +527,7 @@ func formatHNS(resp engine.HNSResponse) string {
 
 // formatHNSRule renders one ACL rule as an aligned key=value line, omitting
 // empty match fields. Protocol 256 is HNS's "any".
-func formatHNSRule(r engine.HNSRule) string {
+func formatHNSRule(r calico.HNSRule) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  [%5d] %-5s %-6s", r.Priority, r.Action, r.Direction)
 	if r.Protocol == 256 {
@@ -512,16 +556,16 @@ func formatHNSRule(r engine.HNSRule) string {
 	return b.String()
 }
 
-// runTest implements `calico-engine test`: read the same JSON/YAML Request
+// runTest implements `telepathy test`: read the same JSON/YAML Request
 // from stdin (topology) plus any -policy manifests, then check every assertion
 // in the -assert file against the evaluated connectivity matrix. Prints a
 // per-assertion pass/fail list and exits 1 if any assertion fails — the bit a
-// CI step keys off. -json emits the structured engine.AssertionReport instead.
+// CI step keys off. -json emits the structured api.AssertionReport instead.
 func runTest(args []string) {
 	fs := flag.NewFlagSet("test", flag.ExitOnError)
 	assertPath := fs.String("assert", "", "connectivity test file (YAML/JSON: a list of {from,to,expect[,port,protocol,name]}, or an `assertions:` key)")
 	asJSON := fs.Bool("json", false, "emit the structured JSON AssertionReport instead of text")
-	policies := addRequestFlags(fs)
+	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	if *assertPath == "" {
@@ -531,13 +575,14 @@ func runTest(args []string) {
 	if err != nil {
 		fail("read assertions %s: %v", *assertPath, err)
 	}
-	assertions, err := engine.DecodeAssertions(assertData)
+	assertions, err := api.DecodeAssertions(assertData)
 	if err != nil {
 		fail("%v", err)
 	}
 
+	p := mustProvider(*prov)
 	req := loadRequest(*policies)
-	report := engine.RunAssertions(req, assertions)
+	report := api.RunAssertions(p.Evaluate, req, assertions)
 
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
@@ -558,7 +603,7 @@ func runTest(args []string) {
 // formatAssertionReport renders the report as a human- and grep-friendly list:
 // one `PASS`/`FAIL` line per assertion (with the expected vs. got verdict),
 // engine errors/warnings as comments, and a closing summary line.
-func formatAssertionReport(r engine.AssertionReport) string {
+func formatAssertionReport(r api.AssertionReport) string {
 	var b strings.Builder
 	for _, w := range r.Warnings {
 		fmt.Fprintf(&b, "# WARNING: %s\n", w)
@@ -591,7 +636,7 @@ func formatAssertionReport(r engine.AssertionReport) string {
 	return b.String()
 }
 
-// runDiff implements `calico-engine diff BASE.json HEAD.json`: decode two
+// runDiff implements `telepathy diff BASE.json HEAD.json`: decode two
 // evaluate Responses (the JSON the default subcommand emits — typically one per
 // git checkout) and report the flows that changed between them. Default output
 // is human-readable text; -format markdown emits the PR-comment table and
@@ -610,13 +655,13 @@ func runDiff(args []string) {
 	base := loadResponseFile(rest[0])
 	head := loadResponseFile(rest[1])
 
-	report := engine.DiffResponses(base, head)
+	report := api.DiffResponses(base, head)
 
 	switch *format {
 	case "text":
 		fmt.Print(formatDiffText(report))
 	case "markdown", "md":
-		fmt.Print(engine.FormatDiffMarkdown(report))
+		fmt.Print(api.FormatDiffMarkdown(report))
 	case "json":
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
 			fail("encode report: %v", err)
@@ -633,12 +678,12 @@ func runDiff(args []string) {
 // loadResponseFile reads and decodes one evaluate Response (JSON or YAML) from
 // a file, failing with a precise message — the two diff operands are the most
 // common thing to mistype.
-func loadResponseFile(path string) engine.Response {
+func loadResponseFile(path string) api.Response {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fail("read response %s: %v", path, err)
 	}
-	resp, err := engine.DecodeResponse(data)
+	resp, err := api.DecodeResponse(data)
 	if err != nil {
 		fail("decode response %s: %v", path, err)
 	}
@@ -648,7 +693,7 @@ func loadResponseFile(path string) engine.Response {
 // formatDiffText renders the diff as a grep-friendly list: one line per changed
 // flow (kind, flow, before->after) plus a summary, or a single "no changes"
 // line. Mirrors the text the markdown table carries, for terminal/CI logs.
-func formatDiffText(r engine.DiffReport) string {
+func formatDiffText(r api.DiffReport) string {
 	var b strings.Builder
 	for _, e := range r.Errors {
 		fmt.Fprintf(&b, "# ERROR: %s\n", e)

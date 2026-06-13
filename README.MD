@@ -21,7 +21,7 @@ Because it reuses Felix's (Brain of Calico) real code instead of re-implementing
 ## Quick start
 
 ```bash
-make build          # clones the pinned Calico tree, builds bin/calico-engine
+make build          # clones the pinned Calico tree, builds bin/telepathy
 make test           # evaluate the sample topology + policy -> connectivity matrix
 make verify         # run the sample assertions (the CI gate)
 make diff-demo      # diff a base policy vs a PR that loosens it
@@ -30,7 +30,7 @@ make diff-demo      # diff a base policy vs a PR that loosens it
 The engine is a stdin → stdout filter: a topology Request goes in, a JSON connectivity matrix comes out.
 
 ```bash
-./bin/calico-engine -policy testdata/sample-policy.yaml < testdata/sample-topology.yaml
+./bin/telepathy -policy testdata/sample-policy.yaml < testdata/sample-topology.yaml
 ```
 ```json
 { "matrix": {
@@ -60,7 +60,7 @@ assertions:
     expect: deny      # port/protocol optional — inherit the probe
 ```
 ```bash
-calico-engine test -assert telepathy.tests.yaml -policy ./policies < topology.yaml
+telepathy test -assert telepathy.tests.yaml -policy ./policies < topology.yaml
 # PASS  frontend may reach backend  (demo/frontend -> demo/backend)  expect=allow got=allow
 # PASS  attacker must not reach backend  (demo/attacker -> demo/backend)  expect=deny got=deny
 # 2 passed, 0 failed
@@ -70,9 +70,9 @@ calico-engine test -assert telepathy.tests.yaml -policy ./policies < topology.ya
 Evaluate the matrix on two revisions (one per git checkout) and report only what moved:
 
 ```bash
-calico-engine -policy ./policies < topology.yaml > base.json   # on the base branch
-calico-engine -policy ./policies < topology.yaml > head.json   # on the PR branch
-calico-engine diff -format markdown base.json head.json
+telepathy -policy ./policies < topology.yaml > base.json   # on the base branch
+telepathy -policy ./policies < topology.yaml > head.json   # on the PR branch
+telepathy diff -format markdown base.json head.json
 ```
 
 renders the PR comment:
@@ -121,9 +121,9 @@ docker run --rm -i ghcr.io/frozenprocess/telepathy:latest \
 The same Request renders the rules Felix would actually program — a unique window into what your policy *compiles to*:
 
 ```bash
-calico-engine iptables -policy p.yaml < topology.yaml   # iptables / nftables chains
-calico-engine bpf      -policy p.yaml < topology.yaml   # annotated eBPF policy program
-calico-engine hns      -policy p.yaml < topology.yaml   # Windows HNS ACL rules
+telepathy iptables -policy p.yaml < topology.yaml   # iptables / nftables chains
+telepathy bpf      -policy p.yaml < topology.yaml   # annotated eBPF policy program
+telepathy hns      -policy p.yaml < topology.yaml   # Windows HNS ACL rules
 ```
 
 ## Input format
@@ -143,7 +143,7 @@ protocol: tcp
 
 ## How it works
 
-Telepathy imports Calico directly (pinned in `third_party/calico`): it builds a Felix `CalculationGraph` from your topology + policies, then walks each ordered pair through `app-policy/checker.Evaluate` for both egress and ingress. The semantics live in the importable [`engine`](engine/) package; the CLI is a thin shim, so a long-running server can `import` the engine and skip the per-call fork/exec. `calico-engine version` lists the pinned Calico tag and the engine's capabilities.
+Telepathy is pluggable across CNIs: the vendor-neutral request/response schema lives in the importable [`api`](api/) package, and each CNI's policy engine sits behind the `Provider` interface in [`provider`](provider/) (selected at runtime with `-provider`, default `calico`). The Calico provider ([`provider/calico`](provider/calico/)) imports Calico directly (pinned in `third_party/calico`): it builds a Felix `CalculationGraph` from your topology + policies, then walks each ordered pair through `app-policy/checker.Evaluate` for both egress and ingress. The CLI is a thin shim, so a long-running server can `import` the packages and skip the per-call fork/exec. `telepathy version` lists the pinned Calico tag and the engine's capabilities.
 
 ### Legal Notice
 

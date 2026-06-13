@@ -1,6 +1,6 @@
 # Sample input for `make test`: a tiny 3-pod topology in one namespace.
 #
-# Piped to calico-engine on stdin as the evaluation Request (topology +
+# Piped to telepathy on stdin as the evaluation Request (topology +
 # probe). The accompanying NetworkPolicy is layered in via `-policy`
 # (see the Makefile `test` target), so this file stays pure topology.
 #

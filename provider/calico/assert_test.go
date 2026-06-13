@@ -15,9 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package calico
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/frozenprocess/telepathy/api"
+)
 
 // assertTopology is a three-pod namespace mirroring testdata: frontend and
 // attacker both try to reach backend on 8080. The layered policy permits only
@@ -57,7 +61,7 @@ spec:
 // wrong expectation must fail — otherwise the check is vacuous.
 func TestRunAssertionsPassFail(t *testing.T) {
 	req := assertTopology()
-	rep := RunAssertions(req, []Assertion{
+	rep := api.RunAssertions(Evaluate, req, []Assertion{
 		{Name: "frontend reaches backend", From: "demo/frontend", To: "demo/backend", Expect: "allow"},
 		{Name: "attacker blocked", From: "demo/attacker", To: "demo/backend", Expect: "deny"},
 	})
@@ -69,7 +73,7 @@ func TestRunAssertionsPassFail(t *testing.T) {
 	}
 
 	// A deliberately wrong expectation must fail and report the real verdict.
-	rep = RunAssertions(req, []Assertion{
+	rep = api.RunAssertions(Evaluate, req, []Assertion{
 		{From: "demo/attacker", To: "demo/backend", Expect: "allow"},
 	})
 	if rep.Ok() || rep.Failed != 1 {
@@ -85,7 +89,7 @@ func TestRunAssertionsPassFail(t *testing.T) {
 // are the most common authoring mistakes.
 func TestRunAssertionsUnknownFlowAndBadExpect(t *testing.T) {
 	req := assertTopology()
-	rep := RunAssertions(req, []Assertion{
+	rep := api.RunAssertions(Evaluate, req, []Assertion{
 		{From: "demo/frontend", To: "demo/nope", Expect: "allow"},
 		{From: "demo/frontend", To: "demo/backend", Expect: "maybe"},
 	})
@@ -105,7 +109,7 @@ func TestDecodeAssertionsBothForms(t *testing.T) {
 	bare := []byte("- {from: a, to: b, expect: allow}\n- {from: a, to: c, expect: deny}\n")
 	wrapped := []byte("assertions:\n  - {from: a, to: b, expect: allow}\n  - {from: a, to: c, expect: deny}\n")
 	for _, in := range [][]byte{bare, wrapped} {
-		got, err := DecodeAssertions(in)
+		got, err := api.DecodeAssertions(in)
 		if err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -113,7 +117,7 @@ func TestDecodeAssertionsBothForms(t *testing.T) {
 			t.Fatalf("unexpected parse: %+v", got)
 		}
 	}
-	if _, err := DecodeAssertions([]byte("   ")); err == nil {
+	if _, err := api.DecodeAssertions([]byte("   ")); err == nil {
 		t.Fatal("expected error on empty input")
 	}
 }

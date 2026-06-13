@@ -71,7 +71,7 @@ Broaden CI/CD reach beyond GitHub Actions.
 - [ ] **Tekton Task**
 - [ ] **Argo Workflows template**
 - [ ] **VS Code extension** — inline policy evaluation on save
-- [ ] Server mode (`calico-engine serve`) — long-running HTTP/gRPC endpoint
+- [ ] Server mode (`telepathy serve`) — long-running HTTP/gRPC endpoint
       for editors and policy managers that want to avoid per-call fork/exec
 
 ---

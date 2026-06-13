@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package engine
+package api
 
 import (
 	"fmt"
@@ -85,7 +85,7 @@ func (r AssertionReport) Ok() bool {
 // DecodeAssertions parses a test file (JSON or YAML, via sigs.k8s.io/yaml) into
 // a slice of Assertions. It accepts both the bare-list form
 //
-//	- {from: a, to: b, expect: allow}
+//   - {from: a, to: b, expect: allow}
 //
 // and the wrapped form
 //
@@ -124,7 +124,7 @@ func DecodeAssertions(data []byte) ([]Assertion, error) {
 //
 // req is not mutated; each group runs on a shallow copy with Port/Protocol
 // overridden (the slices are shared read-only, which Evaluate never writes).
-func RunAssertions(req Request, assertions []Assertion) AssertionReport {
+func RunAssertions(eval func(Request) Response, req Request, assertions []Assertion) AssertionReport {
 	var report AssertionReport
 	report.Results = make([]AssertionResult, len(assertions))
 
@@ -164,7 +164,7 @@ func RunAssertions(req Request, assertions []Assertion) AssertionReport {
 		probeReq := req
 		probeReq.Port = k.port
 		probeReq.Protocol = k.proto
-		resp := Evaluate(probeReq)
+		resp := eval(probeReq)
 
 		for _, e := range resp.Errors {
 			if !seenErr[e] {
