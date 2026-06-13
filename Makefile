@@ -15,21 +15,22 @@ CALICO_REPO    ?= https://github.com/projectcalico/calico.git
 CALICO_VERSION ?= v3.32.0
 CALICO_DIR     ?= third_party/calico
 
-# Antrea source tree — the second CNI provider. Vendored alongside Calico and
-# linked into the same binary via the go.work workspace (see go.work target).
+# Antrea source tree — the second CNI provider. It builds as its OWN binary
+# (engines/antrea) over this tree, in a separate Go module/workspace, so its
+# native dependency versions never have to reconcile with Calico's. Building the
+# two CNIs as separate binaries is what removes the cross-CNI dependency
+# conflicts (network-policy-api, controller-runtime) — there is no shared graph,
+# hence no version pin.
 ANTREA_REPO    ?= https://github.com/antrea-io/antrea.git
 ANTREA_VERSION ?= v2.6.1
 ANTREA_DIR     ?= third_party/antrea
 
-# controller-runtime must be pinned to Antrea v2.6.1's version: Calico v3.32.0
-# pulls v0.23.x but Antrea's vendored multicluster webhook code uses the older
-# v0.21.0 NewWebhookManagedBy signature, and the two are NOT source-compatible.
-# Default MVS picks the higher version and Antrea fails to compile; pinning DOWN
-# to v0.21.0 builds both (verified: Calico still compiles and passes tests).
-# Revisit if a future Calico bump needs a v0.23-only controller-runtime API.
-CR_PIN_VERSION ?= v0.21.0
-
+# The shell binary (Calico in-process + the api contract).
 BIN            ?= bin/telepathy
+# The out-of-process Antrea engine binary, placed next to BIN so the shell finds
+# it automatically (see proxy.go locate()).
+ANTREA_BIN     ?= bin/telepathy-engine-antrea
+ANTREA_MOD     ?= engines/antrea
 
 # Docker build environment. GO_VERSION tracks .go-version so the container
 # toolchain matches what the repo pins; override either var to retarget.
@@ -74,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-docker image test calico antrea clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test calico antrea clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -118,22 +119,38 @@ $(ANTREA_DIR):
 
 antrea: $(ANTREA_DIR)  ## Fetch the pinned Antrea source tree
 
-# --- Workspace -------------------------------------------------------------
-# go.work makes the engine module (.) build against the local Calico + Antrea
-# checkouts instead of versioned dependencies, and pins controller-runtime to
-# the version both trees compile against (see CR_PIN_VERSION). Recreated to stay
-# in sync with these vars; the file is generated (gitignored), not edited.
-go.work: $(CALICO_DIR) $(ANTREA_DIR)
-	@echo ">> initialising go workspace (. + $(CALICO_DIR) + $(ANTREA_DIR))"
-	go work init . $(CALICO_DIR) $(ANTREA_DIR)
-	go work edit -replace sigs.k8s.io/controller-runtime=sigs.k8s.io/controller-runtime@$(CR_PIN_VERSION)
+# --- Workspaces ------------------------------------------------------------
+# Each binary builds in its OWN workspace so the two CNI module graphs stay
+# isolated (no shared-dependency reconciliation, no version pins). Both are
+# generated build artifacts (gitignored), not edited.
+#
+# Root: the shell + the api contract + Calico's tree.
+go.work: $(CALICO_DIR)
+	@echo ">> initialising shell workspace (. + ./api + $(CALICO_DIR))"
+	go work init . ./api $(CALICO_DIR)
+
+# Antrea engine: its module + the api contract + Antrea's tree, with Antrea's
+# native dependency versions.
+$(ANTREA_MOD)/go.work: $(ANTREA_DIR)
+	@echo ">> initialising antrea engine workspace ($(ANTREA_MOD) + ./api + $(ANTREA_DIR))"
+	@# GOWORK pins the output to this module's own go.work; without it `go work
+	@# init` walks up, finds the root workspace, and refuses.
+	cd $(ANTREA_MOD) && GOWORK="$(CURDIR)/$(ANTREA_MOD)/go.work" go work init . ../../api ../../$(ANTREA_DIR)
 
 # --- Build -----------------------------------------------------------------
-build: $(CALICO_DIR) $(ANTREA_DIR) go.work  ## Clone Calico + Antrea (if needed), create go.work, build the binary
+build: build-shell build-antrea  ## Clone sources, create workspaces, build both binaries
+
+build-shell: $(CALICO_DIR) go.work  ## Build the shell binary (Calico in-process)
 	@mkdir -p $(dir $(BIN))
 	@echo ">> building $(BIN)"
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
 	@echo ">> built $(BIN)"
+
+build-antrea: $(ANTREA_DIR) $(ANTREA_MOD)/go.work  ## Build the out-of-process Antrea engine binary
+	@mkdir -p $(dir $(ANTREA_BIN))
+	@echo ">> building $(ANTREA_BIN)"
+	cd $(ANTREA_MOD) && go build -o $(CURDIR)/$(ANTREA_BIN) .
+	@echo ">> built $(ANTREA_BIN)"
 
 # --- Docker build ----------------------------------------------------------
 # Build inside a pinned golang container instead of with the host toolchain,
@@ -218,5 +235,5 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 clean:  ## Remove build artifacts
 	rm -rf bin
 
-distclean: clean  ## Also remove the Calico + Antrea checkouts and go.work
-	rm -rf $(CALICO_DIR) $(ANTREA_DIR) go.work go.work.sum
+distclean: clean  ## Also remove the Calico + Antrea checkouts and generated workspaces
+	rm -rf $(CALICO_DIR) $(ANTREA_DIR) go.work go.work.sum $(ANTREA_MOD)/go.work $(ANTREA_MOD)/go.work.sum

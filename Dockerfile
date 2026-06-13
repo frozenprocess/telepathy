@@ -2,8 +2,12 @@
 #
 # Two-stage build for telepathy.
 #
-#   stage 1 (build):   compile the Linux engine binary with the project Makefile
-#   stage 2 (runtime): copy just the static binary into a minimal base image
+#   stage 1 (build):   compile the Linux binaries with the project Makefile
+#   stage 2 (runtime): copy the static binaries into a minimal base image
+#
+# `make build` produces two binaries: the `telepathy` shell (Calico in-process)
+# and the out-of-process `telepathy-engine-antrea` engine. Both are copied into
+# the same directory so the shell finds the engine automatically (proxy.go).
 #
 # The engine imports Linux-only Calico/Felix packages, so the image is always
 # linux/<arch>. That still runs on macOS and Windows hosts *through Docker*,
@@ -45,5 +49,6 @@ RUN make build
 FROM scratch
 
 COPY --from=build /src/bin/telepathy /usr/local/bin/telepathy
+COPY --from=build /src/bin/telepathy-engine-antrea /usr/local/bin/telepathy-engine-antrea
 
 ENTRYPOINT ["/usr/local/bin/telepathy"]

@@ -143,7 +143,14 @@ protocol: tcp
 
 ## How it works
 
-Telepathy is pluggable across CNIs: the vendor-neutral request/response schema lives in the importable [`api`](api/) package, and each CNI's policy engine sits behind the `Provider` interface in [`provider`](provider/) (selected at runtime with `-provider`, default `calico`). The Calico provider ([`provider/calico`](provider/calico/)) imports Calico directly (pinned in `third_party/calico`): it builds a Felix `CalculationGraph` from your topology + policies, then walks each ordered pair through `app-policy/checker.Evaluate` for both egress and ingress. The CLI is a thin shim, so a long-running server can `import` the packages and skip the per-call fork/exec. `telepathy version` lists the pinned Calico tag and the engine's capabilities.
+Telepathy is pluggable across CNIs. The vendor-neutral request/response schema lives in the small [`api`](api/) module, and each CNI's policy engine sits behind the `Provider` interface in [`provider`](provider/), selected at runtime with `-provider` (default `calico`; `telepathy version` lists the registered providers). Both drive the CNI's own code offline — no cluster.
+
+Crucially, **each CNI engine builds as its own binary from its own Go module**, so their dependency graphs never have to reconcile (Calico and Antrea pin incompatible versions of `network-policy-api`, `controller-runtime`, etc. — linking them into one binary is impossible without version hacks). The neutral `api` JSON contract is the boundary between them:
+
+- **`calico`** ([`provider/calico`](provider/calico/)) is linked into the main `telepathy` binary (built over `third_party/calico`): it builds a Felix `CalculationGraph` from your topology + policies, walks each ordered pair through `app-policy/checker.Evaluate` for both egress and ingress, and can render the iptables/nftables/eBPF/HNS dataplane Felix would program.
+- **`antrea`** is a separate binary, `telepathy-engine-antrea` ([`engines/antrea`](engines/antrea/), built over `third_party/antrea` with Antrea's native dependency versions). The shell dispatches `-provider antrea` to it over the JSON contract (Request on stdin → Response on stdout). It drives Antrea's real `grouping.GroupEntityIndex` to resolve pod/namespace selectors, then applies Kubernetes NetworkPolicy semantics over the resolved members. A cross-process test asserts it agrees with the Calico engine flow-for-flow.
+
+`make build` produces both binaries side by side; the shell finds the engine next to itself (override with `TELEPATHY_ANTREA_ENGINE`).
 
 ### Legal Notice
 
