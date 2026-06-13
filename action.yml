@@ -1,6 +1,6 @@
 name: "Telepathy NetworkPolicy Check"
 description: >-
-  Simulate Kubernetes/Calico NetworkPolicy in CI using Calico's real policy engine. No cluster required.
+  Simulate Kubernetes Network Security Policies in CI using Calico's real policy engine. No cluster required.
 author: "frozenprocess"
 branding:
   icon: "shield"

@@ -135,8 +135,12 @@ var (
 	buildDate = "unknown"
 )
 
-// capability describes one thing the engine can do, surfaced by --version so a
-// caller can discover the feature set without scraping the help text.
+// defaultProvider is the CNI engine used when -provider is not given. Calico
+// keeps the original behaviour; every subcommand defaults to it.
+const defaultProvider = "calico"
+
+// capability describes one subcommand, surfaced by --version so a caller can
+// discover the feature set without scraping the help text.
 type capability struct {
 	name, desc string
 }
@@ -160,7 +164,20 @@ func printVersion() {
 	fmt.Printf("  commit  %s\n", gitCommit)
 	fmt.Printf("  built   %s\n", buildDate)
 	fmt.Println()
-	fmt.Println("Capabilities:")
+	fmt.Printf("Providers (select with -provider; default %s):\n", defaultProvider)
+	for _, name := range provider.List() {
+		marker := ""
+		if name == defaultProvider {
+			marker = " (default)"
+		}
+		caps := 0
+		if p, ok := provider.Get(name); ok {
+			caps = len(p.Capabilities())
+		}
+		fmt.Printf("  %-9s%s  %d policy capabilities\n", name, marker, caps)
+	}
+	fmt.Println()
+	fmt.Println("Subcommands:")
 	for _, c := range capabilities {
 		fmt.Printf("  %-9s %s\n", c.name, c.desc)
 	}
@@ -229,7 +246,7 @@ func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
 func addRequestFlags(fs *flag.FlagSet) (*stringSlice, *string) {
 	var policies stringSlice
 	fs.Var(&policies, "policy", "raw policy manifest YAML file or directory to append to the stdin Request (repeatable)")
-	prov := fs.String("provider", "calico", "CNI policy engine to evaluate with (e.g. calico)")
+	prov := fs.String("provider", defaultProvider, "CNI policy engine to evaluate with (e.g. calico)")
 	return &policies, prov
 }
 
