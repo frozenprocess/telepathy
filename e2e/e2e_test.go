@@ -911,6 +911,11 @@ func runEngine(ctx context.Context, topologyText, policyFile, assertFile string)
 }
 
 func effPort(a api.Assertion, req api.Request) int {
+	// ICMP carries no L4 port; never inherit the topology/default 8080 for it
+	// (the probe ignores port for ICMP, and a phantom 8080 only misleads the report).
+	if p := effProto(a, req); p == "icmp" || p == "icmpv6" {
+		return 0
+	}
 	if a.Port != 0 {
 		return a.Port
 	}

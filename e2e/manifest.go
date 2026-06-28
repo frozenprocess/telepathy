@@ -213,6 +213,14 @@ func appendToolsContainer(containers *yamlNode, image string) {
 		c.raw("name", "tools")
 		c.scalar("image", image)
 		c.raw("command", `["sleep","infinity"]`)
+		// ping needs a raw ICMP socket; kind nodes leave net.ipv4.ping_group_range
+		// closed, so without CAP_NET_RAW every ICMP probe fails and reads as a
+		// false deny (engine says allow, cluster "denies").
+		c.block("securityContext", func(sc *yamlNode) {
+			sc.block("capabilities", func(cap *yamlNode) {
+				cap.scalarSeq("add", []string{"NET_RAW"})
+			})
+		})
 	})
 }
 

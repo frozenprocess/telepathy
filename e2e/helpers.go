@@ -22,6 +22,7 @@ package e2e
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -93,6 +94,14 @@ func sortedValues(m map[string]string) []string {
 // are already simple (kebab-case dir names), so this is just a guard.
 func sanitizeName(name string) string {
 	return strings.NewReplacer("/", "_", " ", "_").Replace(name)
+}
+
+// portStr renders a port number, or "-" for a portless protocol (ICMP).
+func portStr(p int) string {
+	if p == 0 {
+		return "-"
+	}
+	return strconv.Itoa(p)
 }
 
 // dash renders an empty string as "-", for table cells that have no value.

@@ -90,8 +90,8 @@ func (r *caseReport) render() string {
 		case rw.expectMismatch:
 			verdict = "expect? (engine==cluster, != expect)"
 		}
-		fmt.Fprintf(&b, "  %-22s %-22s %-5d %-5s %-7s %-7s %-7s %s\n",
-			rw.from, rw.to, rw.port, rw.proto, rw.expect, dash(rw.engine), dash(rw.cluster), verdict)
+		fmt.Fprintf(&b, "  %-22s %-22s %-5s %-5s %-7s %-7s %-7s %s\n",
+			rw.from, rw.to, portStr(rw.port), rw.proto, rw.expect, dash(rw.engine), dash(rw.cluster), verdict)
 	}
 	if d := r.details(); d != "" {
 		b.WriteString("\n  probe output (failed rows):\n")
@@ -111,7 +111,11 @@ func (r *caseReport) details() string {
 		if rw.quarantined != "" || (!rw.engineMismatch && rw.probeErr == "") {
 			continue
 		}
-		fmt.Fprintf(&b, "  --- %s -> %s (%s/%d) ---\n", rw.from, rw.to, rw.proto, rw.port)
+		if rw.port == 0 {
+			fmt.Fprintf(&b, "  --- %s -> %s (%s) ---\n", rw.from, rw.to, rw.proto)
+		} else {
+			fmt.Fprintf(&b, "  --- %s -> %s (%s/%d) ---\n", rw.from, rw.to, rw.proto, rw.port)
+		}
 		if rw.probeErr != "" {
 			fmt.Fprintf(&b, "    probe error: %s\n", rw.probeErr)
 		}
