@@ -455,13 +455,20 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			t.Log(msg)
 			return
 		}
-		// Policy (twice: a tier listed before its policies fails to delete on
-		// the first pass), then HEPs, restore failsafes, then netsets.
+		// Policy teardown is two passes because Calico rejects deleting a
+		// non-empty tier synchronously (admission webhook), so the tier's GNPs
+		// must be *gone* — not just delete-requested — before the tier delete is
+		// issued. Pass 1 waits (no --wait=false) so the GNPs finalize; its own
+		// tier delete fails (tier still non-empty at that instant) and is
+		// ignored. Pass 2 deletes the now-empty tier. We only ever delete the
+		// case manifest's own objects, so the built-in tiers (default,
+		// kube-admin, kube-baseline) — which can't be deleted by design — are
+		// never touched. Then HEPs, restore failsafes, then netsets.
 		if appliedPolicy != "" {
+			_, _ = c.kubectl(cctx, []byte(appliedPolicy), "delete", "--ignore-not-found", "-f", "-")
 			if out, err := c.deleteManifest(cctx, appliedPolicy); err != nil {
 				t.Logf("teardown delete policy: %v\n%s", err, out)
 			}
-			_, _ = c.deleteManifest(cctx, appliedPolicy)
 		}
 		if appliedHEP != "" {
 			_, _ = c.deleteManifest(cctx, appliedHEP)
