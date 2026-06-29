@@ -252,27 +252,11 @@ verify: build  ## Build, then gate the topology against TEST_ASSERT (exits non-z
 # non-zero if any case fails an assertion — the full regression contract.
 e2e/testdata_DIR ?= e2e/testdata
 
-verify-all: build  ## Build, then run `telepathy test` over every e2e/testdata/<case>/ applicable to PROVIDER (skips the rest; exits non-zero on any failure)
-	@echo ">> running $(e2e/testdata_DIR)/*/ [provider=$(PROVIDER)]"
-	@fail=0; run=0; skip=0; \
-	for d in $(e2e/testdata_DIR)/*/; do \
-		[ -f "$$d/assertions.yaml" ] || continue; \
-		flavor=$$(sed -n 's/^flavor:[[:space:]]*//p' "$$d/meta.yaml" 2>/dev/null); \
-		if [ "$$flavor" != "k8s" ] && [ "$$flavor" != "$(PROVIDER)" ]; then \
-			printf "  \033[33mSKIP\033[0m %s (flavor=%s, not applicable to $(PROVIDER))\n" "$$(basename $$d)" "$$flavor"; \
-			skip=$$((skip+1)); continue; \
-		fi; \
-		run=$$((run+1)); \
-		if $(BIN) test -provider $(PROVIDER) -assert "$$d/assertions.yaml" -policy "$$d/policy.yaml" < "$$d/topology.yaml" >/dev/null 2>&1; then \
-			printf "  \033[32mPASS\033[0m %s\n" "$$(basename $$d)"; \
-		else \
-			printf "  \033[31mFAIL\033[0m %s\n" "$$(basename $$d)"; \
-			$(BIN) test -provider $(PROVIDER) -assert "$$d/assertions.yaml" -policy "$$d/policy.yaml" < "$$d/topology.yaml" 2>&1 | grep -E "FAIL|error" | sed 's/^/        /'; \
-			fail=$$((fail+1)); \
-		fi; \
-	done; \
-	echo ">> $$((run-fail))/$$run cases passed, $$skip skipped (provider=$(PROVIDER))"; \
-	[ $$fail -eq 0 ]
+verify-all: build  ## Build, then run the e2e harness engine-only (no cluster) over every e2e/testdata/<case>/ applicable to PROVIDER; exits non-zero on any failure
+	@echo ">> verifying $(e2e/testdata_DIR)/*/ [provider=$(PROVIDER)] (engine-only, no cluster)"
+	@TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) E2E_NO_CLUSTER=1 \
+		TESTDATA_DIR=$(abspath $(e2e/testdata_DIR)) \
+		go test -tags e2e -count=1 ./e2e/... -v -run 'TestE2E$(if $(CASE),/$(CASE),)'
 
 # DIFF_BASE / DIFF_HEAD are the two policy revisions diff-demo compares against
 # the same topology — base (frontend-only) vs a PR that opens it to every pod.

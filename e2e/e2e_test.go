@@ -40,23 +40,39 @@ import (
 // All tunables (env-backed knobs and the timing constants) live on the package's
 // Config; see config.go. The harness reads them through the package-level cfg.
 
-// TestE2E runs every applicable e2e/testdata case on the live cluster and fails if
-// the dataplane disagrees with the engine on any assertion.
+// TestE2E runs every applicable e2e/testdata case and fails if any assertion is
+// wrong. By default it compares the engine against the live cluster's dataplane;
+// with E2E_NO_CLUSTER=1 (the `make verify-all` backend) it skips the cluster and
+// scores the engine's prediction against each case's authored `expect` instead.
+// Both modes share the same case discovery, skip rules and engine invocation, so
+// verify and e2e can't drift into two different answers.
 func TestE2E(t *testing.T) {
+	if cfg.NoCluster {
+		checkProvider(t)
+		runCases(t, "verify ("+cfg.Provider+")", func(t *testing.T, name, dir string) {
+			verifyCase(t, name, dir)
+		})
+		return
+	}
 	c, err := newCluster()
 	if err != nil {
 		t.Fatalf("cluster not ready (did `make e2e` / hacks/provision/calico-up.sh run?): %v", err)
 	}
+	runCases(t, "e2e ("+cfg.Provider+")", func(t *testing.T, name, dir string) {
+		runCase(t, c, name, dir)
+	})
+}
 
+// runCases discovers every e2e/testdata case, runs each through `run` as a subtest,
+// and logs a one-line pass/fail/skip tally at the end. `go test` prints per-case
+// PASS/FAIL/SKIP lines and a single closing FAIL/ok, but no counts — and a failure
+// can scroll far above the closing line, so the summary is easy to miss otherwise.
+func runCases(t *testing.T, label string, run func(t *testing.T, name, dir string)) {
 	entries, err := os.ReadDir(cfg.TestdataDir)
 	if err != nil {
 		t.Fatalf("read testdata dir %s: %v", cfg.TestdataDir, err)
 	}
 
-	// Per-case outcomes, recorded from each subtest's own cleanup so the parent can
-	// print an aggregate tally at the end. `go test` prints per-case PASS/FAIL/SKIP
-	// lines and a single closing FAIL/ok, but no counts — and a failure can scroll
-	// far above the closing line, so a one-line summary is easy to miss otherwise.
 	// The subtests run sequentially (no t.Parallel), so appending here is race-free.
 	var passed, failed, skipped int
 	var failedNames, skippedNames []string
@@ -83,13 +99,13 @@ func TestE2E(t *testing.T) {
 					passed++
 				}
 			})
-			runCase(t, c, name, dir)
+			run(t, name, dir)
 		})
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "e2e summary (%s): %d passed, %d failed, %d skipped of %d cases",
-		cfg.Provider, passed, failed, skipped, passed+failed+skipped)
+	fmt.Fprintf(&b, "%s summary: %d passed, %d failed, %d skipped of %d cases",
+		label, passed, failed, skipped, passed+failed+skipped)
 	if failed > 0 {
 		fmt.Fprintf(&b, "\n  failed:  %s", strings.Join(failedNames, ", "))
 	}
@@ -97,6 +113,69 @@ func TestE2E(t *testing.T) {
 		fmt.Fprintf(&b, "\n  skipped: %s", strings.Join(skippedNames, ", "))
 	}
 	t.Log("\n" + b.String())
+}
+
+// checkProvider fails the run once, up front, if cfg.Provider isn't a provider the
+// engine knows. Without it a typo'd PROVIDER (e.g. "antera") surfaces as one cryptic
+// "engine output not JSON" failure per case, the real reason buried in each. We probe
+// by running the engine over a throwaway assertion: an unknown provider is rejected
+// before evaluation, a known one proceeds (and "fails" the dummy assertion, ignored).
+func checkProvider(t *testing.T) {
+	assertFile := filepath.Join(t.TempDir(), "provider-probe.yaml")
+	if err := os.WriteFile(assertFile, []byte("[{from: a, to: b, expect: allow}]"), 0o644); err != nil {
+		t.Fatalf("write provider-probe assertion: %v", err)
+	}
+	cmd := exec.CommandContext(context.Background(), cfg.TelepathyBin,
+		"test", "-provider", cfg.Provider, "-assert", assertFile)
+	cmd.Stdin = strings.NewReader("")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	_ = cmd.Run()
+	if strings.Contains(stderr.String(), "unknown -provider") {
+		t.Fatalf("%s", strings.TrimSpace(stderr.String()))
+	}
+}
+
+// verifyCase is the engine-only path (E2E_NO_CLUSTER=1): it applies the same
+// case-applicability rules runCase uses (flavor + the antrea engine's
+// unsupported-kind gate) and runs the very same engine invocation, but scores the
+// prediction against the case's authored `expect` instead of probing a cluster.
+func verifyCase(t *testing.T, name, dir string) {
+	provider := cfg.Provider
+	flavor := readFlavor(t, filepath.Join(dir, "meta.yaml"))
+	if flavor != "k8s" && flavor != provider {
+		t.Skipf("flavor %q not applicable to %s provider", flavor, provider)
+	}
+	policyText := string(readFile(t, filepath.Join(dir, "policy.yaml")))
+	if provider == "antrea" {
+		if kind := unsupportedAntreaKind(policyText); kind != "" {
+			t.Skipf("antrea engine does not evaluate %s — skipping (would misreport)", kind)
+		}
+	}
+
+	topoBytes := readFile(t, filepath.Join(dir, "topology.yaml"))
+	assertions, err := api.DecodeAssertions(readFile(t, filepath.Join(dir, "assertions.yaml")))
+	if err != nil {
+		t.Fatalf("decode assertions: %v", err)
+	}
+	report, stderr, err := runEngine(context.Background(), string(topoBytes),
+		filepath.Join(dir, "policy.yaml"), filepath.Join(dir, "assertions.yaml"))
+	if err != nil {
+		t.Fatalf("engine: %v", err)
+	}
+	if len(report.Results) != len(assertions) {
+		t.Fatalf("engine returned %d results for %d assertions\nstderr: %s", len(report.Results), len(assertions), stderr)
+	}
+	for _, r := range report.Results {
+		if r.Pass {
+			continue
+		}
+		got := dash(r.Got)
+		if r.Err != "" {
+			got = "error: " + r.Err
+		}
+		t.Errorf("%s -> %s: expect %s, engine got %s", r.Assertion.From, r.Assertion.To, r.Assertion.Expect, got)
+	}
 }
 
 // runCase orchestrates one e2e/testdata case end to end (see doc.go for the phases).

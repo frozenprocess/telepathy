@@ -73,6 +73,14 @@ type Config struct {
 	// cases (used to isolate the pool's effect when diagnosing a case).
 	NoNodePool bool // E2E_NO_NODE_POOL=1
 
+	// NoCluster runs the harness engine-only: it skips standing up / talking to a
+	// cluster and instead scores the engine's prediction against each case's
+	// authored `expect` — the backend behind `make verify-all`. Routing verify
+	// through the same harness (same case discovery, skip rules and engine
+	// invocation as the live e2e run) keeps the two from drifting into different
+	// answers.
+	NoCluster bool // E2E_NO_CLUSTER=1
+
 	// ArtifactRoot is the base directory for per-failure diagnostics, or "" when
 	// capture is disabled. Each failing case gets a subdirectory under it.
 	ArtifactRoot string // E2E_ARTIFACTS
@@ -130,6 +138,7 @@ func loadConfig() Config {
 		IncludeHEP:    envBool("E2E_INCLUDE_HEP"),
 		KeepOnFailure: envBool("E2E_KEEP"),
 		NoNodePool:    envBool("E2E_NO_NODE_POOL"),
+		NoCluster:     envBool("E2E_NO_CLUSTER"),
 		ArtifactRoot:  os.Getenv("E2E_ARTIFACTS"),
 
 		SettleDelay:    3 * time.Second,
