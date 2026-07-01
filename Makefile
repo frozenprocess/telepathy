@@ -75,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-calico e2e-antrea clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -278,26 +278,22 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 # observed in the cluster. 
 # Testcases can be found in e2e/testdata/ folder
 CLUSTER_NAME ?= telepathy-e2e
+PROVIDER    ?= calico
 
-
-e2e-calico: build
+# Stand up kind + the chosen CNI and compare every applicable e2e/testdata case's
+# real connectivity against the engine. Pick the CNI with PROVIDER=<name>, which
+# must have a matching hacks/provision/<name>-up.sh. Examples:
+#   make e2e                     # calico (default)
+#   make e2e PROVIDER=antrea
+#   make e2e PROVIDER=calico CASE=gnp-icmp-allow
+e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's real connectivity against the engine
 	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
 	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
-	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-up.sh
-	@lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"
-	@CLUSTER_NAME=$(CLUSTER_NAME)-calico TELEPATHY_BIN=$(abspath $(BIN)) \
+	@test -x ./hacks/provision/$(PROVIDER)-up.sh || { echo "unknown PROVIDER=$(PROVIDER): no hacks/provision/$(PROVIDER)-up.sh"; exit 1; }
+	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/$(PROVIDER)-up.sh
+	@[ "$(PROVIDER)" = calico ] && { lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"; }; true
+	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) \
 		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
-
-e2e-antrea: build  ## Stand up kind+Antrea and compare each k8s case's real connectivity against the Antrea engine
-	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
-	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
-	@CLUSTER_NAME=$(CLUSTER_NAME)-antrea ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/antrea-up.sh
-	@CLUSTER_NAME=$(CLUSTER_NAME)-antrea TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=antrea \
-		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
-
-e2e: build  ## Stand up kind+Calico and compare every e2e/testdata case's real connectivity against the engine
-	@$(MAKE) e2e-calico
-	@$(MAKE) e2e-antrea
 
 # --- Cleanup ---------------------------------------------------------------
 clean:  ## Remove build artifacts
