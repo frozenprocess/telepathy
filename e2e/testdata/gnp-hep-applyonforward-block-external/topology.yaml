@@ -1,0 +1,109 @@
+# Topology for testcase 'gnp-hep-applyonforward-block-external'.
+#
+# Intent: the canonical applyOnForward scenario from the Calico docs
+# (host-forwarded-traffic, "Connection 1"): an EXTERNAL client whose traffic is
+# forwarded by a node on to a workload. A wildcard-interface HostEndpoint on
+# every node (role=forward-firewall) carries a GlobalNetworkPolicy with
+# applyOnForward: true that denies forwarded traffic to any database pod
+# (app=='database') and allows everything else.
+#
+# An off-cluster observer can only reach a node IP / NodePort (it has no route to
+# Calico pod IPs), so each backend is fronted by a NodePort Service. The observer
+# dials <node-IP>:<nodePort>; kube-proxy DNATs to the backend pod; the packet then
+# traverses the entry node's forward chain where the applyOnForward HEP polices it.
+# The discriminator is the DESTINATION pod (app=='database'), which is invariant
+# here because normal (non-preDNAT) forward policy is evaluated AFTER DNAT — the
+# dataplane and the engine (which models the flow to the backend pod) both see the
+# real destination and agree on the verdict.
+#
+# Both backends are pinned to worker2 while the observer enters via worker (the
+# smallest-named HEP node the harness dials), so the flow is a true cross-host
+# forward: observer -> worker (applyOnForward HEP) -> forwarded -> worker2 pod.
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+endpoints:
+  # Database backend the applyOnForward policy DENIES forwarded traffic to.
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+    node: telepathy-e2e-calico-worker2
+  # Non-database backend forwarded traffic is ALLOWED to reach.
+  - id: prod/web
+    namespace: prod
+    name: web
+    ip: 10.0.0.1
+    labels:
+      app: web
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+    node: telepathy-e2e-calico-worker2
+  # Off-cluster observer whose forwarded traffic the HEP polices. role:external +
+  # unpoliced: it has no Calico workload identity and is not itself a policy target.
+  - id: world/observer
+    namespace: world
+    name: observer
+    ip: 203.0.113.5
+    role: external
+    unpoliced: true
+    labels:
+      scope: internet
+services:
+  # Database fronted by a NodePort so the external observer has a routable path.
+  - name: db-np
+    namespace: prod
+    type: NodePort
+    selector:
+      app: database
+    ports:
+      - port: 8080
+        protocol: tcp
+        targetPort: "8080"
+        nodePort: 30080
+  # Non-database backend NodePort (the allowed forwarded flow).
+  - name: web-np
+    namespace: prod
+    type: NodePort
+    selector:
+      app: web
+    ports:
+      - port: 8080
+        protocol: tcp
+        targetPort: "8080"
+        nodePort: 30081
+hostEndpoints:
+  - name: fwfw-worker
+    node: telepathy-e2e-calico-worker
+    interfaceName: "*"
+    expectedIPs:
+      - 172.18.0.4
+    labels:
+      role: forward-firewall
+  - name: fwfw-worker2
+    node: telepathy-e2e-calico-worker2
+    interfaceName: "*"
+    expectedIPs:
+      - 172.18.0.2
+    labels:
+      role: forward-firewall
+port: 8080
+protocol: tcp

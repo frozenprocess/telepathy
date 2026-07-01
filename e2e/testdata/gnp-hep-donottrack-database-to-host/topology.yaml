@@ -1,121 +1,54 @@
 # Topology for testcase 'gnp-hep-donottrack-database-to-host'.
-# Intent: Stand up a Calico HostEndpoint on the kind node (wildcard interface) and attach a do-not-track GlobalNetworkPolicy plus its companion normal GlobalNetworkPolicy, both selecting the HEP and both denying database pods (selector app=='database') while allowing everything else. doNotTrack policy is evaluated statelessly in the iptables raw table (NOTRACK), so traffic terminating on the host endpoint has no conntrack and BOTH directions of a flow must independently pass; the companion normal policy is required because the packet still traverses the filter table afterward. Net effect on the host/<name> rows/cols: database<->host is denied in both directions (the do-not-track ingress deny on the reverse leg also blocks the forward leg, since there is no conntrack to permit the return path); every other host-terminating flow is allowed; pod-to-pod transit is unaffected.
 #
-# Self-contained telepathy Request (endpoints + namespaces + probe + any
-# host endpoints / services / network sets the policy references). Run:
+# Intent: a real doNotTrack (untracked) host firewall, in the scenario doNotTrack
+# is actually designed for — external clients connecting to a host-networked
+# server. A Calico HostEndpoint is attached to the node's real interface (eth0,
+# NOT "*": Calico silently ignores doNotTrack on an all-interfaces HEP), and the
+# harness stands up a hostNetwork agnhost on that node listening on :8080 (the
+# "host/<name>" server). Two off-cluster observers on the kind network dial
+# <node-IP>:8080 directly: one whose source CIDR the doNotTrack ingress rule
+# DENIES, one it ALLOWS.
+#
+# doNotTrack policy runs statelessly in the iptables raw table (NOTRACK), so
+# there is no conntrack and the reply leg is NOT auto-allowed — the egress rule
+# must independently allow the server's return traffic. A companion NORMAL
+# GlobalNetworkPolicy is required because, after the raw table, the packet still
+# traverses the filter table, where the HostEndpoint default-denies anything the
+# normal tier doesn't allow. The discriminating Deny lives only in the doNotTrack
+# tier; the normal tier just allows everything so the doNotTrack tier is the sole
+# decider (mirrors the workshop's redis-accelerator + k8s-worker pair).
+#
+# A source-CIDR discriminator is used on purpose: external clients have no Calico
+# workload identity, so a host-port doNotTrack firewall matches on nets, not pod
+# labels (unlike a pod-to-pod policy). The placeholder IPs below are rewritten to
+# the observer containers' real kind-network addresses by the harness, which also
+# rewrites the policy's source nets to match.
+#
+# Self-contained telepathy Request. Run:
 #   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
-namespaces:
-  - name: prod
-    labels:
-      env: prod
-      purpose: policy-eval
-      kubernetes.io/metadata.name: prod
-  - name: dev
-    labels:
-      env: dev
-      purpose: policy-eval
-      kubernetes.io/metadata.name: dev
 endpoints:
-  - id: prod/frontend
-    namespace: prod
-    name: frontend
-    ip: 10.0.0.1
+  # Off-cluster observer whose source CIDR the doNotTrack policy DENIES.
+  - id: world/blocked
+    namespace: world
+    name: blocked
+    ip: 203.0.113.5
+    role: external
+    unpoliced: true
     labels:
-      app: frontend
-      tier: web
-      env: prod
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker2
-  - id: prod/backend
-    namespace: prod
-    name: backend
-    ip: 10.0.0.2
+      scope: internet
+  # Off-cluster observer the doNotTrack policy ALLOWS (different source CIDR).
+  - id: world/allowed
+    namespace: world
+    name: allowed
+    ip: 198.51.100.7
+    role: external
+    unpoliced: true
     labels:
-      app: backend
-      tier: app
-      env: prod
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker
-  - id: prod/database
-    namespace: prod
-    name: database
-    ip: 10.0.0.3
-    labels:
-      app: database
-      tier: data
-      env: prod
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker
-  - id: dev/frontend
-    namespace: dev
-    name: frontend
-    ip: 10.0.0.4
-    labels:
-      app: frontend
-      tier: web
-      env: dev
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker2
-  - id: dev/backend
-    namespace: dev
-    name: backend
-    ip: 10.0.0.5
-    labels:
-      app: backend
-      tier: app
-      env: dev
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker
-  - id: dev/database
-    namespace: dev
-    name: database
-    ip: 10.0.0.6
-    labels:
-      app: database
-      tier: data
-      env: dev
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: udp-echo
-        port: 8081
-        protocol: udp
-    node: telepathy-e2e-calico-worker
+      scope: internet
 hostEndpoints:
   - name: kind-node-dnt
     node: telepathy-e2e-calico-worker2
-    interfaceName: "*"
+    interfaceName: eth0
     expectedIPs:
       - 172.18.0.2
     labels:

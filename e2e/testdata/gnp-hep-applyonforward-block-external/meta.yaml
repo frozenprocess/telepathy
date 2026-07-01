@@ -1,0 +1,23 @@
+# Policy dialect, decided by apiVersion.
+#   k8s    - upstream Kubernetes networking API (networking.k8s.io);
+#            evaluated by every engine.
+#   calico - projectcalico.org CRDs; evaluated only by the calico engine.
+flavor: calico
+
+# Probe role:external endpoints from an off-cluster Docker container on the kind
+# network (a "north-south" observer), reaching the backend via the NodePort
+# Service rather than via kubectl-exec into a pod. This is the only externally
+# routable vantage, and the one applyOnForward governs once kube-proxy DNATs the
+# NodePort to the backend pod. Requires E2E_INCLUDE_HEP=1 since the case attaches
+# HostEndpoints.
+externalProbe: true
+
+# The backends are pinned to worker2 in the topology while the observer enters via
+# worker (the smallest-named HEP node), so colocation steering is unnecessary; the
+# forward path is fixed by node placement.
+hepAvoidColocation: false
+
+# The observer enters one worker and the backend pods live on another, so the
+# forwarded flow genuinely crosses the host boundary the applyOnForward HEP guards.
+# Require control-plane + 2 workers; skip below that rather than emit a false DIFF.
+minNodes: 3

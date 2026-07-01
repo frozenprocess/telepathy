@@ -1,0 +1,13 @@
+# Connectivity assertions for 'gnp-hep-applyonforward-block-external'.
+# Off-cluster observer -> NodePort Service (node-IP:nodePort). kube-proxy DNATs to
+# the backend pod, then the entry node's applyOnForward HEP polices the forwarded
+# flow on the real destination.
+assertions:
+  # Forwarded to a database pod: denied by applyOnForward (dest app=='database').
+  - from: world/observer
+    to: svc/prod/db-np
+    expect: deny
+  # Forwarded to a non-database pod: allowed.
+  - from: world/observer
+    to: svc/prod/web-np
+    expect: allow

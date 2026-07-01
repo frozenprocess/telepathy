@@ -5,17 +5,15 @@
 # `make verify-all PROVIDER=<x>` runs a case when flavor==k8s or flavor==<x>.
 flavor: calico
 
-# Steer HostEndpoint relocation off the nodes hosting the pods this HEP must
-# police across the host boundary. A "*"-interface HEP can't police traffic
-# to/from a pod on its OWN node (that traffic rides a cali workload interface),
-# so the host<->pod deny assertions (database -> host) only reproduce on the
-# cluster when the HEP and the database pods land on different nodes.
-hepAvoidColocation: true
+# Probe role:external endpoints from off-cluster Docker containers on the kind
+# network (the clients a host-port doNotTrack firewall is meant to govern),
+# dialing <node-IP>:8080 directly — the only externally routable vantage, and the
+# one the doNotTrack raw-table chain actually sees. Requires E2E_INCLUDE_HEP=1
+# since the case attaches a HostEndpoint.
+externalProbe: true
 
-# This case only reproduces on the dataplane when a worker hosts none of the
-# database pods the HEP must police across the host boundary. With a single
-# worker every pod shares it, the HEP is forced to colocate, and a "*"-interface
-# HEP can't police same-node pod<->host traffic — so the database->host deny
-# silently fails to enforce (engine deny vs cluster allow). Require control-plane
-# + 2 workers; skip below that rather than emit a false DIFF.
-minNodes: 3
+# Needs a worker the HostEndpoint can land on (HEPs are steered off the control
+# plane). Control-plane + 1 worker is enough; there are no in-cluster pods to
+# colocate against, so the pod<->host same-node limitation that forced 3 nodes
+# in the pod-matrix design no longer applies.
+minNodes: 2

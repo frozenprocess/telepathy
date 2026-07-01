@@ -1,0 +1,27 @@
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: forward-firewall-deny-database-external
+spec:
+  # Applies to the wildcard HostEndpoints on every node. applyOnForward extends
+  # the rules to traffic the node FORWARDS (not just traffic to/from the host),
+  # so a packet DNAT'd from a NodePort to a database pod is denied as it transits
+  # the entry node's forward chain. The Allow keeps every other forwarded flow
+  # moving (without it the wildcard HEP's default-drop would block the allowed
+  # path). Normal (non-preDNAT) policy is evaluated after DNAT, so the destination
+  # selector matches the real backend pod.
+  selector: role == 'forward-firewall'
+  applyOnForward: true
+  types:
+    - Ingress
+    - Egress
+  ingress:
+    - action: Deny
+      destination:
+        selector: app == 'database'
+    - action: Allow
+  egress:
+    - action: Deny
+      destination:
+        selector: app == 'database'
+    - action: Allow

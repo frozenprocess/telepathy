@@ -1,8 +1,13 @@
 apiVersion: projectcalico.org/v3
 kind: GlobalNetworkPolicy
 metadata:
-  name: dnt-database-to-host
+  name: dnt-host-accelerator
 spec:
+  # doNotTrack on the eth0 HostEndpoint: untracked (raw-table) policy for the
+  # host-networked server on :8080. doNotTrack REQUIRES applyOnForward. Stateless,
+  # so the egress rule must explicitly allow the server's return traffic — there
+  # is no conntrack to do it. The Deny matches the blocked observer's source CIDR
+  # (rewritten to its real IP by the harness); every other client is allowed.
   selector: role == 'untracked-fw'
   doNotTrack: true
   applyOnForward: true
@@ -12,8 +17,13 @@ spec:
   ingress:
     - action: Deny
       source:
-        selector: app == 'database'
+        nets:
+          - 203.0.113.5/32
     - action: Allow
+      protocol: TCP
+      destination:
+        ports:
+          - 8080
   egress:
     - action: Allow
 ---
@@ -22,14 +32,16 @@ kind: GlobalNetworkPolicy
 metadata:
   name: dnt-normal-companion
 spec:
+  # Normal (tracked) companion. After the raw-table doNotTrack chain, the packet
+  # still traverses the filter table, where the HostEndpoint default-denies. This
+  # allows everything through the normal tier so the doNotTrack tier above is the
+  # sole discriminator. Without it the allowed observer's flow would clear raw
+  # but be dropped by the HEP's normal default-deny.
   selector: role == 'untracked-fw'
   types:
     - Ingress
     - Egress
   ingress:
-    - action: Deny
-      source:
-        selector: app == 'database'
     - action: Allow
   egress:
     - action: Allow
