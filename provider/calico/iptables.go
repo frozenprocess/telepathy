@@ -339,7 +339,7 @@ func ipVersionsForReq(req Request) []int {
 	return out
 }
 
-func sortedKeys[V any](m map[string]V) []string {
+func sortedKeys(m map[string]*proto.WorkloadEndpoint) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

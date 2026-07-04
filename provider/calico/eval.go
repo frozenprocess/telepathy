@@ -23,9 +23,11 @@ import (
 	"os"
 	"strings"
 
+	apiv3 "github.com/projectcalico/api/pkg/apis/projectcalico/v3"
 	"github.com/projectcalico/api/pkg/lib/numorstring"
 
 	"github.com/projectcalico/calico/app-policy/checker"
+	"github.com/projectcalico/calico/app-policy/policystore"
 	"github.com/projectcalico/calico/felix/proto"
 	"github.com/projectcalico/calico/felix/rules"
 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
@@ -119,114 +121,14 @@ func Evaluate(req Request) Response {
 		resp.Warnings = append(resp.Warnings, w)
 	}
 
-	protoNum := protocolNumber(req.Protocol)
-	dstPort := req.Port
-	if !protocolHasL4Ports(protoNum) {
-		dstPort = 0
-	}
-	httpMethod := strPtr(req.HTTPMethod)
-	httpPath := strPtr(req.HTTPPath)
-
-	mkFlow := func(src, dst *actor) *flow {
-		return &flow{
-			srcIP:      src.ip,
-			dstIP:      dst.ip,
-			srcPort:    req.SrcPort,
-			dstPort:    dstPort,
-			protocol:   protoNum,
-			httpMethod: httpMethod,
-			httpPath:   httpPath,
-		}
-	}
+	mkFlow := flowFactory(req)
 
 	for _, src := range actors.list {
 		for _, dst := range actors.list {
 			if src.id == dst.id {
 				continue
 			}
-			f := mkFlow(src, dst)
-			rev := mkFlow(dst, src)
-
-			// Terminating-traffic hook: standard egress(src) AND ingress(dst).
-			// For HEPs this uses hep.Tiers (which Calico's calc graph populates
-			// from policies WITHOUT doNotTrack / preDNAT / applyOnForward — i.e.
-			// the policy applies to traffic terminating at this endpoint).
-			//
-			// Unpoliced: a node with NO HostEndpoint. Calico doesn't police
-			// host traffic until a HEP exists, so the host's own egress/ingress
-			// are unconditionally allowed — only the peer pod's policy limits the
-			// flow. Without this, a broad pod policy (e.g. an unselected GNP,
-			// which Calico treats as selector all()) would wrongly appear to deny
-			// the host's egress to the internet.
-			egressOK := src.unpoliced ||
-				verdict(checker.Evaluate(rules.RuleDirEgress, store, src.normalWEP(), f))
-			ingressOK := dst.unpoliced ||
-				verdict(checker.Evaluate(rules.RuleDirIngress, store, dst.normalWEP(), f))
-			allow := egressOK && ingressOK
-
-			// applyOnForward overlay: HEPs whose node matches src.node or
-			// dst.node and that carry a forward policy in the relevant direction
-			// also evaluate. Skip the HEP if it IS src/dst (then ForwardTiers
-			// wouldn't apply — traffic terminates there, so Tiers governs above).
-			//
-			// The direction guard (forwardTierHas) matters: a single-direction
-			// applyOnForward policy (e.g. types:[Egress]) populates only that
-			// direction's forward tier. The OTHER direction must stay
-			// default-ALLOW for forwarded traffic — Calico denies a forwarded
-			// flow only when an applyOnForward policy actually selects the HEP in
-			// that direction. Verified on a live cluster: a types:[Egress]-only
-			// forward firewall denies its egress-matched flows but leaves
-			// ingress-forward open. Guarding on "any forward tier exists" instead
-			// would end-of-tier-deny the unspecified direction (a divergence).
-			for _, h := range actors.hepsByNode[src.node] {
-				if h.id == src.id || !forwardTierHas(h.hep, false) {
-					continue
-				}
-				if !verdict(checker.Evaluate(rules.RuleDirEgress, store, h.forwardWEP(), f)) {
-					allow = false
-				}
-			}
-			for _, h := range actors.hepsByNode[dst.node] {
-				if h.id == dst.id || !forwardTierHas(h.hep, true) {
-					continue
-				}
-				if !verdict(checker.Evaluate(rules.RuleDirIngress, store, h.forwardWEP(), f)) {
-					allow = false
-				}
-			}
-
-			// preDNAT overlay: HEPs on the destination node with non-empty
-			// PreDnatTiers gate ingress before kube-proxy DNAT. We probe with
-			// the resolved pod IP, not a Service ClusterIP, so rules selecting
-			// on a Service VIP won't match — see lint.go capability note.
-			for _, h := range actors.hepsByNode[dst.node] {
-				if h.id == dst.id || len(h.hep.GetPreDnatTiers()) == 0 {
-					continue
-				}
-				if !verdict(checker.Evaluate(rules.RuleDirIngress, store, h.preDnatWEP(), f)) {
-					allow = false
-				}
-			}
-
-			// doNotTrack overlay: applies only when the HEP itself is src or
-			// dst (i.e. traffic actually terminates at the HEP, where the raw-
-			// table chain runs). Untracked traffic has no conntrack, so the
-			// reply leg traverses the same rules — we model that by requiring
-			// the reverse-direction evaluation to also allow.
-			if src.kind == actorHEP && len(src.hep.GetUntrackedTiers()) > 0 {
-				fwd := verdict(checker.Evaluate(rules.RuleDirEgress, store, src.untrackedWEP(), f))
-				rvs := verdict(checker.Evaluate(rules.RuleDirIngress, store, src.untrackedWEP(), rev))
-				if !(fwd && rvs) {
-					allow = false
-				}
-			}
-			if dst.kind == actorHEP && len(dst.hep.GetUntrackedTiers()) > 0 {
-				fwd := verdict(checker.Evaluate(rules.RuleDirIngress, store, dst.untrackedWEP(), f))
-				rvs := verdict(checker.Evaluate(rules.RuleDirEgress, store, dst.untrackedWEP(), rev))
-				if !(fwd && rvs) {
-					allow = false
-				}
-			}
+			allow, _ := evalFlow(store, src, dst, mkFlow(src, dst), mkFlow(dst, src), actors.hepsByNode)
 
 			res := "deny"
 			if allow {
@@ -239,6 +141,119 @@ func Evaluate(req Request) Response {
 	addServiceColumns(&resp, req, actors)
 	buildActorReport(&resp, actors)
 	return resp
+}
+
+// flowFactory returns a builder for the per-pair flow probe from the Request's
+// single probe (protocol/port/http). Hoisted out of Evaluate so ResolveTierMatches
+// can drive the identical per-flow evaluation.
+func flowFactory(req Request) func(src, dst *actor) *flow {
+	protoNum := protocolNumber(req.Protocol)
+	dstPort := req.Port
+	if !protocolHasL4Ports(protoNum) {
+		dstPort = 0
+	}
+	httpMethod := strPtr(req.HTTPMethod)
+	httpPath := strPtr(req.HTTPPath)
+	return func(src, dst *actor) *flow {
+		return &flow{
+			srcIP:      src.ip,
+			dstIP:      dst.ip,
+			srcPort:    req.SrcPort,
+			dstPort:    dstPort,
+			protocol:   protoNum,
+			httpMethod: httpMethod,
+			httpPath:   httpPath,
+		}
+	}
+}
+
+// evalFlow runs the full per-flow policy walk for one src→dst pair and returns
+// the allow/deny verdict plus the set of tier names whose END-OF-TIER default
+// action was reached by any of the flow's evaluations. Reaching a tier's
+// end-of-tier action is a "partial match": the tier's policies select the
+// endpoint (so the tier is in its path) but no rule in the tier decided this
+// flow, so it falls through to the tier's default action. The checker records
+// that as a RuleID with Index == RuleIndexTierDefaultAction (see
+// app-policy/checker), which IsTierDefaultActionRule() detects.
+//
+// This is the single source of truth for the matrix (Evaluate ignores the
+// end-of-tier set) and for ResolveTierMatches' end-of-tier flow accounting, so
+// the two can never diverge on the overlay logic below.
+func evalFlow(store *policystore.PolicyStore, src, dst *actor, f, rev *flow, hepsByNode map[string][]*actor) (bool, map[string]bool) {
+	eot := map[string]bool{}
+	// eval wraps checker.Evaluate: same bool verdict as before, but it also
+	// harvests any end-of-tier actions the walk hit into eot.
+	walk := func(dir rules.RuleDir, ep *proto.WorkloadEndpoint, fl *flow) bool {
+		trace := checker.Evaluate(dir, store, ep, fl)
+		for _, rid := range trace {
+			// Count only real policy tiers reaching their end-of-tier action; the
+			// checker emits the same marker for a profile fall-through (Kind
+			// Profile, Tier "__PROFILE__"), which isn't a tier in the tier view.
+			if rid != nil && rid.IsTierDefaultActionRule() && rid.Kind != apiv3.KindProfile {
+				eot[rid.Tier] = true
+			}
+		}
+		return verdict(trace)
+	}
+
+	// Terminating-traffic hook: standard egress(src) AND ingress(dst). For HEPs
+	// this uses hep.Tiers (policies WITHOUT doNotTrack / preDNAT / applyOnForward).
+	// Unpoliced (a node with no HEP) short-circuits: no policy, so no evaluation
+	// and no end-of-tier reach.
+	egressOK := src.unpoliced || walk(rules.RuleDirEgress, src.normalWEP(), f)
+	ingressOK := dst.unpoliced || walk(rules.RuleDirIngress, dst.normalWEP(), f)
+	allow := egressOK && ingressOK
+
+	// applyOnForward overlay: HEPs on src.node / dst.node carrying a forward
+	// policy in the relevant direction. The direction guard (forwardTierHas)
+	// leaves the unspecified direction default-ALLOW, matching Calico.
+	for _, h := range hepsByNode[src.node] {
+		if h.id == src.id || !forwardTierHas(h.hep, false) {
+			continue
+		}
+		if !walk(rules.RuleDirEgress, h.forwardWEP(), f) {
+			allow = false
+		}
+	}
+	for _, h := range hepsByNode[dst.node] {
+		if h.id == dst.id || !forwardTierHas(h.hep, true) {
+			continue
+		}
+		if !walk(rules.RuleDirIngress, h.forwardWEP(), f) {
+			allow = false
+		}
+	}
+
+	// preDNAT overlay: HEPs on the destination node with PreDnatTiers gate
+	// ingress before kube-proxy DNAT.
+	for _, h := range hepsByNode[dst.node] {
+		if h.id == dst.id || len(h.hep.GetPreDnatTiers()) == 0 {
+			continue
+		}
+		if !walk(rules.RuleDirIngress, h.preDnatWEP(), f) {
+			allow = false
+		}
+	}
+
+	// doNotTrack overlay: applies only when the HEP itself is src or dst.
+	// Untracked traffic has no conntrack, so the reply leg traverses the same
+	// rules — model that by requiring the reverse-direction evaluation to allow.
+	if src.kind == actorHEP && len(src.hep.GetUntrackedTiers()) > 0 {
+		fwd := walk(rules.RuleDirEgress, src.untrackedWEP(), f)
+		rvs := walk(rules.RuleDirIngress, src.untrackedWEP(), rev)
+		if !(fwd && rvs) {
+			allow = false
+		}
+	}
+	if dst.kind == actorHEP && len(dst.hep.GetUntrackedTiers()) > 0 {
+		fwd := walk(rules.RuleDirIngress, dst.untrackedWEP(), f)
+		rvs := walk(rules.RuleDirEgress, dst.untrackedWEP(), rev)
+		if !(fwd && rvs) {
+			allow = false
+		}
+	}
+
+	return allow, eot
 }
 
 // actorKindString maps an actor to its Response.Actor Kind. HEPs are always
