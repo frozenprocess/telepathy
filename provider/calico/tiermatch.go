@@ -59,31 +59,59 @@ type TierMatchResponse struct {
 }
 
 // ResolveTierMatches builds the calc graph for req and reports, per workload
-// endpoint, the tiers and policies that select it.
+// AND host endpoint, the tiers and policies that select it.
 func ResolveTierMatches(req Request) TierMatchResponse {
 	g := buildGraph(req, nil)
 	resp := TierMatchResponse{Warnings: g.warnings, Errors: g.errors}
 
 	for _, id := range sortedKeys(g.wepByID) {
-		wep := g.wepByID[id]
 		tm := TierMatch{Endpoint: id}
-		seen := map[types.PolicyID]bool{}
-		for _, ti := range wep.GetTiers() {
+		collectTiers(&tm, g.wepByID[id].GetTiers())
+		resp.Endpoints = append(resp.Endpoints, tm)
+	}
+
+	// HostEndpoints are policy subjects too: a GlobalNetworkPolicy selecting a
+	// HEP is exactly what the host-firewall lessons rely on. Unlike a workload, a
+	// HEP carries four tier lists - the normal tiers plus the applyOnForward /
+	// preDNAT / doNotTrack overlays (see eval.go's *WEP accessors) - so a
+	// host-firewall policy lands in one of the latter three, not GetTiers(). Walk
+	// all four, or the tier view stays blank for the very policies HEPs exist to
+	// carry. Keyed "host/<name>" to match the matrix/actor id (eval.go:521).
+	for _, name := range sortedKeys(g.hepByName) {
+		hep := g.hepByName[name]
+		tm := TierMatch{Endpoint: "host/" + name}
+		collectTiers(&tm, hep.GetTiers(), hep.GetForwardTiers(), hep.GetPreDnatTiers(), hep.GetUntrackedTiers())
+		resp.Endpoints = append(resp.Endpoints, tm)
+	}
+	return resp
+}
+
+// collectTiers records, into tm, the tiers that select this endpoint (some
+// policy in the tier does) and the deduped ingress∪egress policies from the
+// given tier lists. Accepts several lists because a HEP has four (normal +
+// forward/preDNAT/untracked overlays); tiers and policies are deduped across
+// them so a tier or policy appearing in more than one list is reported once.
+func collectTiers(tm *TierMatch, tierLists ...[]*proto.TierInfo) {
+	seenPol := map[types.PolicyID]bool{}
+	seenTier := map[string]bool{}
+	for _, tiers := range tierLists {
+		for _, ti := range tiers {
 			pols := append(append([]*proto.PolicyID{}, ti.GetIngressPolicies()...), ti.GetEgressPolicies()...)
 			if len(pols) == 0 {
 				continue // tier in the chain but no policy here selects this endpoint
 			}
-			tm.Tiers = append(tm.Tiers, ti.GetName())
+			if !seenTier[ti.GetName()] {
+				seenTier[ti.GetName()] = true
+				tm.Tiers = append(tm.Tiers, ti.GetName())
+			}
 			for _, p := range pols {
 				pid := types.ProtoToPolicyID(p)
-				if seen[pid] {
+				if seenPol[pid] {
 					continue
 				}
-				seen[pid] = true
+				seenPol[pid] = true
 				tm.Policies = append(tm.Policies, PolicyRef{Kind: pid.Kind, Namespace: pid.Namespace, Name: pid.Name})
 			}
 		}
-		resp.Endpoints = append(resp.Endpoints, tm)
 	}
-	return resp
 }
