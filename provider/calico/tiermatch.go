@@ -65,7 +65,14 @@ type TierMatchResponse struct {
 
 // ResolveTierMatches builds the calc graph for req and reports, per workload
 // AND host endpoint, the tiers and policies that select it.
+//
+// This is a VISIBILITY view, so staged policies are always included: a
+// Staged{,Global,Kubernetes}NetworkPolicy selects endpoints and shows what would
+// happen to a flow, it just doesn't enforce. Evaluate (the connectivity matrix)
+// still honours req.EvaluateStaged, so enforcement is unchanged — only this
+// selection/preview report forces staged in.
 func ResolveTierMatches(req Request) TierMatchResponse {
+	req.EvaluateStaged = true
 	g := buildGraph(req, nil)
 	resp := TierMatchResponse{Warnings: g.warnings, Errors: g.errors}
 

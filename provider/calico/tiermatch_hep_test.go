@@ -153,3 +153,32 @@ spec:
 	}
 	mustVerdict(t, rf, "ns/a->ns/b", "deny")
 }
+
+// TestResolveTierMatchesIncludesStaged: a StagedGlobalNetworkPolicy selects
+// endpoints in the tier view even though the request leaves EvaluateStaged
+// false (so the matrix wouldn't enforce it). Staged = visible but not enforced.
+func TestResolveTierMatchesIncludesStaged(t *testing.T) {
+	req := Request{
+		Namespaces: []NamespaceInput{{Name: "prod", Labels: map[string]string{"name": "prod"}}},
+		Endpoints: []Endpoint{{ID: "prod/backend", Namespace: "prod", Name: "backend",
+			IP: "10.0.0.2", Labels: map[string]string{"app": "backend", "env": "prod"}, Node: "n1"}},
+		Policies: []PolicyInput{{YAML: `
+apiVersion: projectcalico.org/v3
+kind: StagedGlobalNetworkPolicy
+metadata: {name: backend-lockdown-staged}
+spec:
+  selector: env == 'prod' && app == 'backend'
+  types: [Ingress]
+`}},
+		Port: 8080, Protocol: "tcp",
+		// EvaluateStaged deliberately left false.
+	}
+	r := ResolveTierMatches(req)
+	tm := findTierMatch(r, "prod/backend")
+	if tm == nil {
+		t.Fatal("prod/backend missing from tier matches")
+	}
+	if !hasPolicy(tm, "backend-lockdown-staged") {
+		t.Fatalf("staged policy should select prod/backend in the tier view; policies=%v", tm.Policies)
+	}
+}
