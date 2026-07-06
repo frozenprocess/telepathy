@@ -41,6 +41,8 @@ package calico
 import (
 	"fmt"
 	"hash/fnv"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/projectcalico/calico/app-policy/policystore"
@@ -137,7 +139,7 @@ func RenderBPF(req Request, opts BPFOptions) BPFResponse {
 					Direction: dir,
 					IPVersion: ipv,
 				}
-				lines, n, err := renderBPFProgram(rls, ipv, opts.Verbose)
+				lines, n, err := renderBPFProgram(rls, ipv, opts.Verbose, g.ipSetMembers)
 				if err != nil {
 					prog.Error = err.Error()
 				}
@@ -227,9 +229,20 @@ func polprogRules(tiers []*proto.TierInfo, profileIDs []string, ingress bool, st
 // allocate on first lookup, giving each set a stable, sequential synthetic ID
 // within this program. The concrete numbers differ from a live node (IP-set
 // IDs are runtime-assigned) — that's inherent to rendering without a kernel.
-type allocOnLookup struct{ a *idalloc.IDAllocator }
+//
+// byID records the reverse mapping (synthetic ID → set string ID) as the
+// compiler allocates, so renderBPFProgram can resolve the hex IDs polprog folds
+// into each rule's "Match:" summary back to the members the calc graph captured.
+type allocOnLookup struct {
+	a    *idalloc.IDAllocator
+	byID map[uint64]string
+}
 
-func (p allocOnLookup) GetNoAlloc(id string) uint64 { return p.a.GetOrAlloc(id) }
+func (p allocOnLookup) GetNoAlloc(id string) uint64 {
+	n := p.a.GetOrAlloc(id)
+	p.byID[n] = id
+	return n
+}
 
 // renderBPFProgram compiles polprog.Rules and renders the result to text.
 // Returns (lines, subProgramCount, error). PolicyDebug is enabled so each
@@ -238,7 +251,7 @@ func (p allocOnLookup) GetNoAlloc(id string) uint64 { return p.a.GetOrAlloc(id) 
 // the concise tier→policy→rule tree. polprog uses logrus.Panic for some error
 // paths, so we recover and report per program rather than crashing the whole
 // render.
-func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool) (lines []string, n int, err error) {
+func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[string][]string) (lines []string, n int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			lines, n, err = nil, 0, fmt.Errorf("polprog panic: %v", r)
@@ -254,7 +267,8 @@ func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool) (lines []string,
 	}
 	// Dummy map FDs (1..4) + an allocate-on-lookup IP-set ID provider: the
 	// compiler embeds these as constants, so no kernel/maps are needed.
-	b := polprog.NewBuilder(allocOnLookup{idalloc.New()}, 1, 2, 3, 4, opts...)
+	prov := allocOnLookup{a: idalloc.New(), byID: map[uint64]string{}}
+	b := polprog.NewBuilder(prov, 1, 2, 3, 4, opts...)
 	progs, err := b.Instructions(rls)
 	if err != nil {
 		return nil, 0, err
@@ -263,7 +277,17 @@ func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool) (lines []string,
 	if verbose {
 		return renderBPFVerbose(progs), len(progs), nil
 	}
-	return renderBPFConcise(progs), len(progs), nil
+	// Map the synthetic IP-set IDs polprog folded into the Match lines back to
+	// the members the calc graph captured. A live node reads these from a kernel
+	// map; we have them in-process, so the concise render can resolve selectors
+	// to member IPs rather than showing opaque hex IDs.
+	membersByID := map[uint64][]string{}
+	for id, setID := range prov.byID {
+		if m := members[setID]; len(m) > 0 {
+			membersByID[id] = m
+		}
+	}
+	return renderBPFConcise(progs, membersByID), len(progs), nil
 }
 
 // renderBPFVerbose emits the full annotated disassembly: jump labels,
@@ -280,6 +304,12 @@ func renderBPFVerbose(progs []asm.Insns) []string {
 				lines = append(lines, label+":")
 			}
 			for _, c := range insn.Comments {
+				if strings.HasPrefix(c, "Match: ") {
+					// Positive per-rule summary is concise-only; the asm view
+					// already carries the per-criterion "If … skip to next rule"
+					// comments inline, so repeating it here is redundant.
+					continue
+				}
 				lines = append(lines, "  ; "+c)
 			}
 			line := "    " + insn.String()
@@ -297,10 +327,10 @@ func renderBPFVerbose(progs []asm.Insns) []string {
 // eBPF instructions and per-match plumbing. This mirrors `calico-node bpf
 // policy dump` (without --asm); see felix/cmd/calico-bpf/commands/policy_debug.go.
 // Rule hit counts are omitted: those come from a live BPF counters map, which a
-// static render has no equivalent of. IP-set IDs are the synthetic
-// allocOnLookup numbers (no kernel map to resolve them against), so they're
-// shown as their hex IDs.
-func renderBPFConcise(progs []asm.Insns) []string {
+// static render has no equivalent of. The per-rule "Match:" summary polprog
+// emits (protocol/nets/ports/ICMP) is surfaced, with its folded IP-set hex IDs
+// resolved to the members the calc graph captured (membersByID).
+func renderBPFConcise(progs []asm.Insns, membersByID map[uint64][]string) []string {
 	var lines []string
 	depth := 0
 	inPolicy := false // inside a "Start of <Kind> …" / "End of …" policy block
@@ -333,8 +363,8 @@ func renderBPFConcise(progs []asm.Insns) []string {
 					if inPolicy {
 						depth = 2
 					}
-				case strings.HasPrefix(c, "IPSets "):
-					lines = append(lines, indent(depth)+formatIPSets(c))
+				case strings.HasPrefix(c, "Match: "):
+					lines = append(lines, indent(depth)+resolveMatch(c, membersByID))
 				case strings.HasPrefix(c, "#####"):
 					// program-split banner: verbose-only.
 				case strings.HasPrefix(c, "Start of "):
@@ -398,20 +428,28 @@ func formatRuleStart(comment string) string {
 	return fmt.Sprintf("Rule: %s  Action: %s", name, action)
 }
 
-// formatIPSets turns `IPSets src_ip_set_ids:<0x..> dst_ip_set_ids:<0x..>` into
-// `IP sets: src=0x.. dst=0x..`. (A live node would resolve the IDs to members;
-// a static render only has the synthetic IDs.)
-func formatIPSets(comment string) string {
-	after := strings.TrimPrefix(comment, "IPSets ")
-	r := strings.NewReplacer(
-		"src_ip_set_ids:<", "src=",
-		"dst_ip_set_ids:<", "dst=",
-		"not_src_ip_set_ids:<", "!src=",
-		"not_dst_ip_set_ids:<", "!dst=",
-		">", "",
-		" ,", ",",
-	)
-	return "IP sets: " + strings.TrimSpace(r.Replace(after))
+// bpfHexIDRe matches the "0x…" IP-set hex IDs polprog folds into a Match line.
+var bpfHexIDRe = regexp.MustCompile(`0x[0-9a-fA-F]+`)
+
+// resolveMatch resolves the synthetic IP-set hex IDs in a "Match: …" comment to
+// the member IPs the calc graph captured, so a selector reads as its members
+// (e.g. `src={0x3}` → `src={10.0.0.8/32,10.65.0.3/32}`) rather than an opaque
+// ID. Mirrors policy_debug.go's resolveMatchIPSets; IDs we can't resolve (no
+// captured members) are left as-is.
+func resolveMatch(comment string, membersByID map[uint64][]string) string {
+	if len(membersByID) == 0 {
+		return comment
+	}
+	return bpfHexIDRe.ReplaceAllStringFunc(comment, func(hex string) string {
+		id, err := strconv.ParseUint(hex, 0, 64)
+		if err != nil {
+			return hex
+		}
+		if m := membersByID[id]; len(m) > 0 {
+			return strings.Join(m, ",")
+		}
+		return hex
+	})
 }
 
 // formatTierEnd turns `End of tier default: pass` into

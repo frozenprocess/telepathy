@@ -75,20 +75,24 @@ type HNSOptions struct {
 	IPVersions []int
 }
 
-// HNSRule is one rendered HNS ACL policy (rule). It mirrors the fields of
-// hns.ACLPolicy that carry policy meaning; the Windows API consumes the
-// JSON-serialised form of these per endpoint.
+// HNSRule is one rendered HNS ACL policy (rule). Its JSON tags and field order
+// reproduce hcsshim's ACLPolicy exactly, so the -json output is the literal
+// blob Felix marshals into an HNSEndpoint's Policies[] and hands to HNS — the
+// Windows analogue of an `iptables -A` line. The single-port / Protocols /
+// ServiceName ACLPolicy fields are omitted: Calico's policysets renderer never
+// populates them, so real nodes omit them too (omitempty).
 type HNSRule struct {
-	ID              string `json:"id,omitempty"`
-	Action          string `json:"action"`
-	Direction       string `json:"direction"`
-	RuleType        string `json:"ruleType"`
-	Protocol        uint16 `json:"protocol"`
-	LocalAddresses  string `json:"localAddresses,omitempty"`
-	RemoteAddresses string `json:"remoteAddresses,omitempty"`
-	LocalPorts      string `json:"localPorts,omitempty"`
-	RemotePorts     string `json:"remotePorts,omitempty"`
-	Priority        uint16 `json:"priority"`
+	Type            string `json:"Type"`
+	ID              string `json:"Id,omitempty"`
+	Protocol        uint16 `json:"Protocol,omitempty"`
+	Action          string `json:"Action"`
+	Direction       string `json:"Direction"`
+	LocalAddresses  string `json:"LocalAddresses,omitempty"`
+	RemoteAddresses string `json:"RemoteAddresses,omitempty"`
+	LocalPorts      string `json:"LocalPorts,omitempty"`
+	RemotePorts     string `json:"RemotePorts,omitempty"`
+	RuleType        string `json:"RuleType,omitempty"`
+	Priority        uint16 `json:"Priority,omitempty"`
 }
 
 // HNSEndpointPolicy is the rendered ACL list for one (endpoint, direction). It
@@ -239,6 +243,7 @@ func renderHNSEndpoint(ps *policysets.PolicySets, wep *proto.WorkloadEndpoint, i
 	out = make([]HNSRule, 0, len(flat))
 	for _, r := range flat {
 		out = append(out, HNSRule{
+			Type:            string(r.Type),
 			ID:              r.Id,
 			Action:          string(r.Action),
 			Direction:       string(r.Direction),
