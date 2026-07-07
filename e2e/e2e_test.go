@@ -187,6 +187,13 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	if flavor != "k8s" && flavor != provider {
 		t.Skipf("flavor %q not applicable to %s provider", flavor, provider)
 	}
+	// requiresOS gates a case on the run's E2E_OS: a case whose topology pins a pod
+	// to a Windows node can't schedule on a Linux-only cluster, so skip (don't fail)
+	// unless the run targets that OS. Engine-only verify (NoCluster) is OS-agnostic
+	// and never reaches here.
+	if want := readMetaStr(t, filepath.Join(dir, "meta.yaml"), "requiresOS"); want != "" && want != cfg.OS {
+		t.Skipf("case requires E2E_OS=%s, run is %s — skipping", want, cfg.OS)
+	}
 	avoidColocation := readMetaFlag(t, filepath.Join(dir, "meta.yaml"), "hepAvoidColocation")
 	// externalProbe realizes `role: external` endpoints as off-cluster Docker
 	// containers on the kind network (rather than pods) and probes from them via
@@ -339,7 +346,7 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			hepRelocated = true
 		}
 	}
-	agnhostImg, netshootImg := cfg.AgnhostImage, cfg.NetshootImage
+	agnhostImg := cfg.AgnhostImage
 	plan := serverPorts(req, assertions)
 
 	// Host stand-in pods are only needed for HEPs that a probe actually
@@ -443,15 +450,63 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	for _, sa := range neededServiceAccounts(req) {
 		docs = append(docs, serviceAccountManifest(sa))
 	}
-	for _, ep := range req.Endpoints {
+	// Pods carry the node OS in their name (e.g. frontend-windows) so `kubectl get
+	// pods` shows placement at a glance. The suffix is a cluster-object-name detail
+	// only — endpoint IDs (the engine's and assertions' keys) are untouched — so we
+	// track ID -> actual pod name and use it wherever a pod is addressed by name.
+	podNameByID := map[string]string{}
+	osByID := map[string]string{} // endpoint ID -> node OS, for the report labels
+	// An ICMP probe needs a ping client on the sender; the Windows agnhost image
+	// has none. So any endpoint used as the source of an ICMP flow is always pinned
+	// to a Linux node (with the Linux agnhost image), regardless of E2E_OS — the
+	// receiver's OS is unconstrained, since its stack answers echo natively. This is
+	// what lets Windows-receiver ICMP cases run: Linux sender -> Windows HNS ingress.
+	icmpSrc := map[string]bool{}
+	for _, a := range assertions {
+		if p := effProto(a, req); p == "icmp" || p == "icmpv6" {
+			icmpSrc[a.From] = true
+		}
+	}
+	for _, ep := range req.Endpoints { // ep is a copy; mutating it won't touch req
 		if externalEP[ep.ID] {
 			continue // off-cluster observer: a Docker container, not a pod (launched below)
 		}
-		docs = append(docs, podManifest(ep, plan, nodeSet, agnhostImg, netshootImg))
+		// Pin the pod to a node of the configured OS (E2E_OS, default linux) so the
+		// policy is enforced by that OS's dataplane — Windows/HNS under E2E_OS=windows.
+		// A per-endpoint nodeSelector (topology) is the author's explicit intent and
+		// takes precedence.
+		if len(ep.NodeSelector) == 0 {
+			ep.NodeSelector = map[string]string{"kubernetes.io/os": cfg.OS}
+		}
+		osName := ep.NodeSelector["kubernetes.io/os"]
+		if osName == "" {
+			osName = cfg.OS // per-endpoint selector without an os key
+		}
+		// ICMP sources override everything onto Linux so they have ping (see above).
+		// The agnhost ref is a multi-arch manifest, so the Linux node pulls the
+		// Linux layer (with busybox ping) automatically — no separate image needed.
+		if icmpSrc[ep.ID] {
+			osName = "linux"
+			ep.NodeSelector = map[string]string{"kubernetes.io/os": "linux"}
+		}
+		// Every testdata `node:` pin names a Linux node (control-plane/worker). On a
+		// non-Linux OS that pin becomes a `nodeName`, which OVERRIDES the OS
+		// nodeSelector and strands the pod back on Linux — defeating the Windows run.
+		// Drop the pin so the nodeSelector places the pod on the target-OS node (with
+		// a single Windows node, all pods co-locate there — same-node enforcement
+		// only; no cross-node distribution). ep is a copy, so the engine still sees
+		// the original node: (it doesn't branch on Node for non-HEP cases anyway).
+		if osName != "linux" {
+			ep.Node = ""
+		}
+		ep.Name += "-" + osName
+		podNameByID[ep.ID] = ep.Name
+		osByID[ep.ID] = osName
+		docs = append(docs, podManifest(ep, plan, nodeSet, agnhostImg))
 	}
 	for _, h := range req.HostEndpoints {
 		if referencedHosts[h.Name] {
-			docs = append(docs, hostPodManifest(h.Name, h.Node, plan, agnhostImg, netshootImg))
+			docs = append(docs, hostPodManifest(h.Name, h.Node, plan, agnhostImg))
 		}
 	}
 	for _, s := range req.Services {
@@ -623,7 +678,7 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			podIPByID[ep.ID] = extIP[ep.ID]
 			continue
 		}
-		ip, err := c.podIP(ctx, ep.Namespace, ep.Name)
+		ip, err := c.podIP(ctx, ep.Namespace, podNameByID[ep.ID]) // OS-suffixed pod name
 		if err != nil || ip == "" {
 			t.Fatalf("pod IP for %s: %v", ep.ID, err)
 		}
@@ -793,7 +848,9 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	probeAssertion := func(i int, a api.Assertion) row {
 		port := effPort(a, req)
 		proto := effProto(a, req)
-		rw := row{from: a.From, to: a.To, port: port, proto: proto, expect: a.Expect, engine: report.Results[i].Got}
+		// Decorate workload actors with their node OS (e.g. prod/frontend[windows])
+		// so the report shows where each pod ran; host/external/service ids have no OS.
+		rw := row{from: withOS(a.From, osByID), to: withOS(a.To, osByID), port: port, proto: proto, expect: a.Expect, engine: report.Results[i].Got}
 
 		// Flows the environment can't faithfully reproduce (e.g. pod->node-IP
 		// SNAT hiding the source identity) are recorded but not probed or
@@ -808,7 +865,7 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		if externalEP[a.From] {
 			src = probeSource{external: true, container: extContainer[a.From]}
 		} else {
-			src, serr = resolveSource(a.From)
+			src, serr = resolveSource(a.From, podNameByID)
 		}
 		dstIP, derr := resolveTargetIP(a.To, podIPByID, hostIPByName, svcIP)
 		// External observers can't reach a ClusterIP or pod IP — only a node IP /
@@ -900,15 +957,30 @@ func ensureClusterHealthy(ctx context.Context, t *testing.T, c *cluster, provide
 	t.Logf("Calico recovered: all tigerastatus components Available")
 }
 
+// withOS decorates a workload actor id with its node OS for the report (e.g.
+// "prod/frontend[windows]"). Non-workload actors (host/external/service) aren't
+// in osByID and are returned unchanged.
+func withOS(id string, osByID map[string]string) string {
+	if os := osByID[id]; os != "" {
+		return id + "[" + os + "]"
+	}
+	return id
+}
+
 // resolveSource maps an assertion's `from` id to the pod that originates the
 // probe. A "host/<name>" source is the hostNetwork pod standing in for the HEP.
-func resolveSource(id string) (probeSource, string) {
+func resolveSource(id string, podNameByID map[string]string) (probeSource, string) {
 	if rest, ok := strings.CutPrefix(id, "host/"); ok {
-		return probeSource{ns: hostNS, pod: rest}, ""
+		return probeSource{ns: hostNS, pod: rest}, "" // HEP host pods aren't OS-suffixed
 	}
-	ns, name, ok := strings.Cut(id, "/")
+	ns, _, ok := strings.Cut(id, "/")
 	if !ok {
 		return probeSource{}, fmt.Sprintf("bad source id %q", id)
+	}
+	// Use the realized pod name (endpoint name + OS suffix), not the raw id.
+	name := podNameByID[id]
+	if name == "" {
+		return probeSource{}, fmt.Sprintf("no realized pod for source %q", id)
 	}
 	return probeSource{ns: ns, pod: name}, ""
 }
@@ -1022,6 +1094,22 @@ func readFlavor(t *testing.T, path string) string {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if rest, ok := strings.CutPrefix(line, "flavor:"); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return ""
+}
+
+// readMetaStr reads a string-valued key from meta.yaml, returning "" when the
+// key or file is absent. Used for gates like requiresOS.
+func readMetaStr(t *testing.T, path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, key+":"); ok {
 			return strings.TrimSpace(rest)
 		}
 	}

@@ -220,3 +220,41 @@ func buildGraph(req Request, icmp *icmpProbe) graphResult {
 
 	return res
 }
+
+// fixDstNamedPorts works around a mismatch between the two upstream components
+// telepathy glues together. Felix's calc graph compiles a policy's destination
+// named-port references into rule.DstNamedPortIpSetIds and populates the
+// referenced IP set with "ip,proto:port" tuples (e.g. "10.0.0.1,tcp:8080"). But
+// the app-policy checker we reuse for rule walking matches those sets with a bare
+// port string ("8080") in checker.matchPort, so the tuple is never found and the
+// rule denies by default.
+//
+// The checker's matchDstIPPortSetIds path DOES match "ip,proto:port" tuples
+// correctly (it builds the identical string from the flow), so we move a rule's
+// destination named-port sets onto DstIpPortSetIds, where the checker matches
+// them IP-aware. We only do this when a named port is the rule's SOLE destination
+// port criterion: DstPorts (numeric) OR named ports is an OR within one ports
+// list, but DstIpPortSetIds is ANDed with DstPort, so mixing the two would turn
+// the OR into an AND. Mixed numeric+named, negated, and source named ports have
+// no correct checker path and are left for lint to flag.
+//
+// This is applied ONLY on the Evaluate path (over the built policystore), never
+// in buildGraph itself: the dataplane renderers (RenderHNS, RenderIptables,
+// RenderBPF) drive Felix's real renderers, which need the ORIGINAL
+// DstNamedPortIpSetIds — Windows/HNS to faithfully drop them, Linux/iptables to
+// render them natively. Rewriting there would make those renders lie.
+func fixDstNamedPorts(pol *proto.Policy) {
+	if pol == nil {
+		return
+	}
+	fix := func(rules []*proto.Rule) {
+		for _, r := range rules {
+			if len(r.DstNamedPortIpSetIds) > 0 && len(r.DstPorts) == 0 {
+				r.DstIpPortSetIds = append(r.DstIpPortSetIds, r.DstNamedPortIpSetIds...)
+				r.DstNamedPortIpSetIds = nil
+			}
+		}
+	}
+	fix(pol.GetInboundRules())
+	fix(pol.GetOutboundRules())
+}

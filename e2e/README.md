@@ -12,6 +12,7 @@ make e2e                              # bring up the cluster (hacks/provision/ca
 make e2e CASE=np-deny-all-ingress     # run a single case
 make e2e CASE=gnp-                    # run every case whose name matches (regex passed to -run)
 E2E_INCLUDE_HEP=1 make e2e            # also run the HostEndpoint cases (see below)
+E2E_OS=windows make e2e               # schedule the workload pods on a Windows node (see below)
 ```
 
 Or directly, against an already-running cluster:
@@ -29,8 +30,9 @@ The cluster is left running so it can be reused across runs; tear it down with
 1. Parse `topology.yaml` / `assertions.yaml` / `policy.yaml` with the `api`
    package (the same types the engine uses — no duplicate schema).
 2. Materialize the topology: `Namespace`s, `ServiceAccount`s, `Pod`s (each
-   running **agnhost** as a TCP/UDP/SCTP server plus a **netshoot** sidecar for
-   ICMP), `Service`s, Calico `(Global)NetworkSet`s and `HostEndpoint`s.
+   running a single **agnhost** container — a TCP/UDP/SCTP server that also
+   supplies busybox `ping` for ICMP probes), `Service`s, Calico
+   `(Global)NetworkSet`s and `HostEndpoint`s.
 3. Wait for pods Ready, harvest their real IPs, and build a fictional→real IP
    map. Rewrite the topology, netsets, HEP IPs, and any policy CIDR that
    contains a fictional endpoint IP so **both** the engine and the cluster
@@ -104,9 +106,11 @@ the namespaces by hand.
 - `kubectl`, `kind`, and `docker` on `PATH`.
 - The `sctp` kernel module for SCTP cases: `sudo modprobe sctp`. `make e2e`
   prints a note if it's missing.
-- Container images (overridable): `AGNHOST_IMAGE`
-  (`registry.k8s.io/e2e-test-images/agnhost:2.52`) and `NETSHOOT_IMAGE`
-  (`nicolaka/netshoot:latest`).
+- Container image (overridable): `AGNHOST_IMAGE`
+  (`registry.k8s.io/e2e-test-images/agnhost:2.52`). It serves L4 and provides
+  busybox `ping` for ICMP — no separate tools image. `E2E_OS=windows` needs a
+  Windows agnhost variant matching the node build (its image has no `ping`, so
+  ICMP is skipped there).
 
 ## HostEndpoint cases (opt-in)
 
@@ -179,8 +183,80 @@ The reference case is `gnp-hep-prednat-nodeport-block-external`: two observers
 NodePort-fronted backend; the deny fires before DNAT on the entry node. Like all
 HostEndpoint cases it requires `E2E_INCLUDE_HEP=1`.
 
+## Windows nodes (`E2E_OS=windows`)
+
+Policies can be exercised against the Calico **Windows/HNS** dataplane by joining
+a Windows node to the kind cluster and pinning the workload pods to it.
+
+### 1. Provision a Windows node
+
+`kind` nodes are Linux containers; a Windows node has to be a real VM. The
+`calico-windows-up.sh` provisioner boots a **QEMU/libvirt Windows Server VM**,
+attaches it to the docker `kind` bridge (so it shares the node subnet — no
+cross-network routing), and joins it, fully unattended:
+
+```bash
+make e2e-windows \
+  WINDOWS_ISO=/path/to/windows-server-2025.iso \
+  WINDOWS_VERSION=2k25 \
+  WINDOWS_IMAGE_NAME="Windows Server 2025 SERVERDATACENTERCORE"
+```
+
+It: reconfigures Calico for Windows (VXLAN, BGP off, `windowsDataplane: HNS`,
+strict IPAM affinity), fetches the virtio drivers (or reuses `VIRTIO_ISO_PATH`),
+renders an unattended-install answer file with a fresh `kubeadm` join token baked
+in, boots the VM, and waits for the node to go `Ready` with `calico-node-windows`
+running. Tear it down (leaving the kind cluster, keeping the ISOs) with
+`make e2e-windows-down`.
+
+Requirements beyond the base ones: **libvirt** (`virt-install`, `virsh`,
+`qemu-img`), **`genisoimage`**/`mkisofs`, and a **Windows Server ISO** (not
+auto-downloadable — Microsoft licensing; Server Core is preferred: headless,
+smaller). See the header of `hacks/provision/calico-windows-up.sh` for every
+env override.
+
+### 2. Run cases on it
+
+```bash
+E2E_OS=windows make e2e CASE=<case>
+```
+
+`E2E_OS=windows` stamps `kubernetes.io/os: windows` on every workload pod's
+`nodeSelector` (unless the endpoint declares its own), so pods land on the
+Windows node. Pods are named `<endpoint>-windows` and the report labels each
+actor with its OS (`prod/frontend[windows]`) so placement is visible at a glance.
+
+The testdata cases pin pods to Linux nodes (`node: ...-worker`) to spread them
+across nodes; under `E2E_OS=windows` those pins are **dropped** (a `nodeName`
+would override the OS nodeSelector), so all pods co-locate on the single Windows
+node. This means Windows runs exercise **same-node** enforcement only — no
+cross-node distribution (you'd need multiple Windows nodes for that).
+
+Two things to know:
+
+- **Windows-compatible image.** Set `AGNHOST_IMAGE` to a Windows agnhost variant
+  whose base build matches the node (Server 2025 = `ltsc2025`) or the pods won't
+  start. The Windows agnhost image has **no `ping`**, so ICMP assertions are
+  **skipped** on Windows (L4 TCP/UDP/SCTP still run).
+- **Don't re-provision under it.** `make e2e` first runs `calico-up.sh`, which
+  re-applies `calico-resources.yaml` (`VXLANCrossSubnet`) — reverting the plain
+  **`VXLAN`** encapsulation Windows HNS requires (on a single-subnet kind cluster
+  CrossSubnet means *no* encapsulation, and HNS drops the unencapsulated pod
+  traffic). After `make e2e-windows`, run the tests against the existing cluster
+  directly instead:
+
+  ```bash
+  CLUSTER_NAME=telepathy-e2e-calico E2E_PROVIDER=calico E2E_OS=windows \
+    TELEPATHY_BIN=$(pwd)/bin/telepathy go test -tags e2e -timeout 60m -count=1 ./e2e/... -v
+  ```
+
 ## Known limitations
 
+- **Windows pod↔Linux pod traffic needs plain `VXLAN`.** The IP pool must be
+  `VXLAN` (not `VXLANCrossSubnet`) for HNS overlay traffic to cross between Linux
+  and Windows nodes; `calico-windows-up.sh` sets this, but a subsequent
+  `calico-up.sh`/`make e2e` reverts it (see above). ICMP is unavailable on
+  Windows (no `ping` in the Windows agnhost image).
 - **IPv4 only.** The IP-remap token matcher (`ipmap.go`) handles IPv4
   addresses/CIDRs; an IPv6 e2e/testdata case would need it widened.
 - **One port per protocol per case.** agnhost's netexec serves one TCP, one UDP,

@@ -1,0 +1,21 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. Completes the "dropped rule" family (negation, ICMP type/code,
+# named ports) in the restrictive direction. Skip (don't fail) unless the run
+# targets Windows.
+#
+# What it proves: Felix's Windows renderer silently drops any rule that references
+# a named port (policysets.go: Src/DstNamedPortIpSetIds -> ErrNotSupported). The
+# rule here ALLOWS TCP on the named port http; dropping it leaves the implicit
+# default-deny, so traffic Linux allows is denied on Windows.
+#
+# Note: this case only became provable after the engine's own named-port bug was
+# fixed (graph.go fixDstNamedPorts). Before that the engine also denied named
+# ports, so it agreed with Windows and produced no DIFF. Now the engine predicts
+# the correct Linux verdict (allow), so the Windows drop shows up as a DIFF.
+#
+# How it proves it: assertions encode the LINUX verdict (== engine prediction), so
+# engine-only `verify-all` passes. On a Windows cluster client->server:8080 is
+# denied while the engine says allow -> DIFF (engine != cluster).
+requiresOS: windows

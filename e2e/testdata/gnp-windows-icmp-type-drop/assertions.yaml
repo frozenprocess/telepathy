@@ -1,0 +1,19 @@
+# Connectivity assertions for 'gnp-windows-icmp-type-drop'.
+#
+# Values encode the LINUX verdict (== the engine's prediction), so engine-only
+# `verify-all` passes. On a Windows cluster the icmp.type rule is dropped and the
+# receiver refuses ICMP — the harness reports DIFF (engine=allow, cluster=deny)
+# on the ICMP row. That DIFF is the proof of the undocumented behaviour.
+assertions:
+  # Linux allows ICMP echo via the type-8 rule; Windows drops the rule -> DIFF.
+  - from: winapp/sender
+    to: winapp/receiver
+    expect: allow
+    protocol: icmp
+  # TCP is covered by the implicit default-deny on both dataplanes (control row,
+  # engine=cluster=deny, no DIFF).
+  - from: winapp/sender
+    to: winapp/receiver
+    expect: deny
+    protocol: tcp
+    port: 8080

@@ -196,26 +196,18 @@ func jsonStrArray(items []string) string {
 	return "[" + strings.Join(quoted, ",") + "]"
 }
 
-// appendAgnhostContainer adds the agnhost L4 server container to a `containers:`
-// sequence. appendToolsContainer adds the netshoot sidecar (sleep infinity), the
-// exec target for ICMP probes agnhost connect can't do. Both pod kinds (workload
-// and host) share this pair, so it lives here once.
+// appendAgnhostContainer adds the agnhost server container to a `containers:`
+// sequence. agnhost serves the case's L4 ports AND is the ICMP exec target: its
+// image bundles busybox /bin/ping, so ICMP probes run here too — no separate
+// tools sidecar (which is why there's no netshoot dependency and no Windows-image
+// gap). ping needs a raw ICMP socket; kind nodes leave net.ipv4.ping_group_range
+// closed, so we grant CAP_NET_RAW or every ICMP probe reads as a false deny.
+// (On Windows the agnhost image has no ping; ICMP probes are skipped there.)
 func appendAgnhostContainer(containers *yamlNode, image string, plan serverPlan) {
 	containers.item(func(c *yamlNode) {
 		c.raw("name", "agnhost")
 		c.scalar("image", image)
 		c.raw("command", agnhostCommand(plan))
-	})
-}
-
-func appendToolsContainer(containers *yamlNode, image string) {
-	containers.item(func(c *yamlNode) {
-		c.raw("name", "tools")
-		c.scalar("image", image)
-		c.raw("command", `["sleep","infinity"]`)
-		// ping needs a raw ICMP socket; kind nodes leave net.ipv4.ping_group_range
-		// closed, so without CAP_NET_RAW every ICMP probe fails and reads as a
-		// false deny (engine says allow, cluster "denies").
 		c.block("securityContext", func(sc *yamlNode) {
 			sc.block("capabilities", func(cap *yamlNode) {
 				cap.scalarSeq("add", []string{"NET_RAW"})
@@ -226,11 +218,11 @@ func appendToolsContainer(containers *yamlNode, image string) {
 
 // --- object renderers ---------------------------------------------------------
 
-// podManifest renders one endpoint as a Pod. The agnhost container serves the
-// case's probed L4 ports; the netshoot sidecar is the exec target for ICMP.
+// podManifest renders one endpoint as a Pod. The single agnhost container serves
+// the case's probed L4 ports and is also the ICMP exec target (busybox ping).
 // nodeName is set only when the topology pins a node that actually exists, so a
 // stale `node:` value doesn't strand the pod in Pending.
-func podManifest(e api.Endpoint, plan serverPlan, nodeExists map[string]bool, agnhost, netshoot string) string {
+func podManifest(e api.Endpoint, plan serverPlan, nodeExists map[string]bool, agnhost string) string {
 	d := doc("v1", "Pod")
 	d.block("metadata", func(m *yamlNode) {
 		m.scalar("name", e.Name)
@@ -243,18 +235,20 @@ func podManifest(e api.Endpoint, plan serverPlan, nodeExists map[string]bool, ag
 		if e.Node != "" && nodeExists[e.Node] {
 			s.scalar("nodeName", e.Node)
 		}
+		// nodeSelector lands the pod on a matching node (e.g. kubernetes.io/os:
+		// windows). Omitted when empty; ignored by kubelet if nodeName is also set.
+		s.labels("nodeSelector", e.NodeSelector)
 		s.block("containers", func(cs *yamlNode) {
 			appendAgnhostContainer(cs, agnhost, plan)
-			appendToolsContainer(cs, netshoot)
 		})
 	})
 	return d.String()
 }
 
-// hostPodManifest renders a hostNetwork agnhost+netshoot pod pinned to a node. It
-// is the dataplane realization of a HostEndpoint row/col: its pod IP equals the
-// node InternalIP, and traffic to/from it is host traffic.
-func hostPodManifest(name, node string, plan serverPlan, agnhost, netshoot string) string {
+// hostPodManifest renders a hostNetwork agnhost pod pinned to a node. It is the
+// dataplane realization of a HostEndpoint row/col: its pod IP equals the node
+// InternalIP, and traffic to/from it is host traffic.
+func hostPodManifest(name, node string, plan serverPlan, agnhost string) string {
 	d := doc("v1", "Pod")
 	d.block("metadata", func(m *yamlNode) {
 		m.scalar("name", name)
@@ -267,7 +261,6 @@ func hostPodManifest(name, node string, plan serverPlan, agnhost, netshoot strin
 		s.scalar("nodeName", node)
 		s.block("containers", func(cs *yamlNode) {
 			appendAgnhostContainer(cs, agnhost, plan)
-			appendToolsContainer(cs, netshoot)
 		})
 	})
 	return d.String()

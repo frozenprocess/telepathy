@@ -1,0 +1,20 @@
+# Allow only ICMP echo-request (type 8) ingress to the receiver. On Linux this
+# renders an ICMP match with a type condition and the receiver answers pings.
+#
+# On Windows/HNS the rule carries `icmp.type`, which Felix cannot express in an
+# HNS ACL, so the WHOLE rule is dropped. With types:[Ingress] the implicit
+# default-deny is then all that remains — the receiver refuses ICMP entirely.
+# Same policy, opposite result: allowed on Linux, denied on Windows.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-allow-icmp-echo-only
+spec:
+  selector: app == 'receiver'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: ICMP
+      icmp:
+        type: 8

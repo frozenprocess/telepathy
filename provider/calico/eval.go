@@ -95,6 +95,13 @@ func Evaluate(req Request) Response {
 	resp.Errors = append(resp.Errors, g.errors...)
 	store, wepByID, hepByName := g.store, g.wepByID, g.hepByName
 
+	// Work around the app-policy checker's named-port matching (Evaluate-only;
+	// the dataplane renderers must see the original named-port sets). See
+	// fixDstNamedPorts.
+	for _, pol := range store.PolicyByID {
+		fixDstNamedPorts(pol)
+	}
+
 	if os.Getenv("POLICY_ENGINE_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG weps=%d policies=%d profiles=%d ipsets=%d\n",
 			len(wepByID), len(store.PolicyByID), len(store.ProfileByID), len(store.IPSetByID))

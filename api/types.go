@@ -70,6 +70,13 @@ type Endpoint struct {
 	ServiceAccountName string            `json:"serviceAccountName,omitempty"`
 	Node               string            `json:"node,omitempty"`
 
+	// NodeSelector constrains which cluster nodes this workload may land on,
+	// e.g. {"kubernetes.io/os": "windows"} to pin a pod to a Windows node. It is
+	// purely an e2e scheduling hint — the engine ignores it (connectivity does
+	// not depend on placement). Rendered as the Pod's spec.nodeSelector; when
+	// Node is also set, nodeName pins the pod and this is ignored (standard k8s).
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// Unpoliced marks a node that has no HostEndpoint. Calico does not
 	// police host traffic until a HEP exists, so the evaluator treats this
 	// endpoint's own egress/ingress as unconditionally allowed — only the peer's

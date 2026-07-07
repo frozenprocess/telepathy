@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unattended answer file for the Calico-Windows e2e node. Rendered by
+  calico-windows-up.sh (@@ placeholders substituted) and burned onto a CD
+  labelled AUTOUNATTEND, which Windows Setup auto-discovers.
+
+  It: injects virtio storage+net drivers so Setup sees the virtio disk/NIC,
+  wipes+partitions disk 0 (UEFI/GPT), installs @@IMAGE_NAME@@, creates the
+  Administrator password, skips OOBE, and on first logon runs bootstrap.ps1
+  from the CD (found by volume label, so the drive letter doesn't matter).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <!-- Load virtio disk + net drivers so WinPE can see the virtio devices.
+         ponytail: E: assumes the virtio ISO is the 2nd CD (SATA order). If
+         Setup reports "no disk found", the virtio CD landed on another letter
+         — change E: below or boot the disk on bus=sata instead of virtio. -->
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DriverPaths>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>E:\vioscsi\@@WINDOWS_VERSION@@\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>E:\viostor\@@WINDOWS_VERSION@@\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+          <Path>E:\NetKVM\@@WINDOWS_VERSION@@\amd64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- UEFI/GPT: ESP + MSR + Windows -->
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>260</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>128</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>@@IMAGE_NAME@@</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <!-- Eval media needs no key; leave empty. -->
+        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <UserAccounts>
+        <AdministratorPassword><Value>@@ADMIN_PASSWORD@@</Value><PlainText>true</PlainText></AdministratorPassword>
+      </UserAccounts>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>Administrator</Username>
+        <Password><Value>@@ADMIN_PASSWORD@@</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <!-- Find the AUTOUNATTEND CD by label (letter is unpredictable) and run
+             the templated bootstrap: virtio guest tools, static IP, containerd,
+             kubelet, kubeadm join. -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$d=(Get-Volume -FileSystemLabel AUTOUNATTEND).DriveLetter; Start-Process powershell.exe -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(\"$($d):\bootstrap.ps1\")"</CommandLine>
+          <Description>Calico-Windows bootstrap</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+
+</unattend>

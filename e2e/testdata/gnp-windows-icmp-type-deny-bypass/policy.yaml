@@ -1,0 +1,21 @@
+# Deny ICMP echo-request (type 8), then allow all ICMP. On Linux the ping (echo)
+# hits the Deny and is blocked; other ICMP types are allowed.
+#
+# On Windows/HNS the Deny rule carries `icmp.type`, which Felix cannot express, so
+# the WHOLE rule is dropped. Only the blanket ICMP Allow remains — the ping is now
+# allowed. Same policy, opposite result: ping denied on Linux, allowed on Windows.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-deny-icmp-echo
+spec:
+  selector: app == 'receiver'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      protocol: ICMP
+      icmp:
+        type: 8
+    - action: Allow
+      protocol: ICMP

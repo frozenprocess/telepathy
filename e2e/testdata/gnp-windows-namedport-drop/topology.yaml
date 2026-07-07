@@ -1,0 +1,40 @@
+# Topology for testcase 'gnp-windows-namedport-drop'.
+# Intent: prove a named-port reference makes Felix drop the whole rule on
+# Windows/HNS. server (app=server) names port 8080 "http" and is the policy
+# target; client is the source. Both pods run on Windows nodes so the receiver's
+# HNS ingress enforces the policy. Only runs under E2E_OS=windows (see meta.yaml).
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+endpoints:
+  - id: prod/server
+    namespace: prod
+    name: server
+    ip: 10.0.0.1
+    labels:
+      app: server
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+  - id: prod/client
+    namespace: prod
+    name: client
+    ip: 10.0.0.2
+    labels:
+      app: client
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+port: 8080
+protocol: tcp

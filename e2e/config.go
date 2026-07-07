@@ -50,12 +50,25 @@ type Config struct {
 	// e2e-antrea` brings up Antrea.
 	Provider string // E2E_PROVIDER
 
-	// AgnhostImage is the sig-network reference server/client (TCP/UDP/SCTP).
-	// NetshootImage supplies ping (and other net tooling) for ICMP probes that
-	// agnhost connect can't do. Overridable so a CI cache or air-gapped registry
-	// can be pointed at.
-	AgnhostImage  string // AGNHOST_IMAGE
-	NetshootImage string // NETSHOOT_IMAGE
+	// OS is the node operating system the case's workload pods are scheduled onto.
+	// Default "linux". Set E2E_OS=windows to run every policy against the Windows
+	// (HNS) dataplane: the harness stamps kubernetes.io/os=<OS> as each pod's
+	// nodeSelector (unless the endpoint declares its own), so the pods land on
+	// nodes of that OS and the enforcement under test is Windows'. NOTE: this only
+	// handles *placement* — a Windows node also needs a Windows-compatible
+	// AGNHOST_IMAGE matching the node's build. ICMP-source pods are the exception:
+	// they're always pinned to Linux (they need busybox ping, which the Windows
+	// image lacks), so ICMP cases with a Windows *receiver* still run under
+	// E2E_OS=windows.
+	OS string // E2E_OS
+
+	// AgnhostImage is the sig-network reference server/client (TCP/UDP/SCTP) and
+	// also the ICMP source — its image bundles busybox ping, so no separate tools
+	// image is needed. Overridable so a CI cache or air-gapped registry can be
+	// pointed at. Use a multi-arch manifest so mixed-OS runs work: ICMP-source
+	// pods are pinned to Linux (for busybox ping) while other pods stay on the
+	// run's OS, and each node pulls the layer matching where its pod lands.
+	AgnhostImage string // AGNHOST_IMAGE
 
 	// IncludeHEP gates the HostEndpoint cases. They narrow Calico's failsafe host
 	// ports to a control-plane-only set cluster-wide for the duration of the case
@@ -133,8 +146,8 @@ func loadConfig() Config {
 		TelepathyBin:  envOr("TELEPATHY_BIN", "../bin/telepathy"),
 		ClusterName:   envOr("CLUSTER_NAME", "telepathy-e2e"),
 		Provider:      envOr("E2E_PROVIDER", "calico"),
+		OS:            envOr("E2E_OS", "linux"),
 		AgnhostImage:  envOr("AGNHOST_IMAGE", "registry.k8s.io/e2e-test-images/agnhost:2.52"),
-		NetshootImage: envOr("NETSHOOT_IMAGE", "nicolaka/netshoot:latest"),
 		IncludeHEP:    envBool("E2E_INCLUDE_HEP"),
 		KeepOnFailure: envBool("E2E_KEEP"),
 		NoNodePool:    envBool("E2E_NO_NODE_POOL"),

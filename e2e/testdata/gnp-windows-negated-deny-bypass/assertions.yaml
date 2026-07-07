@@ -1,0 +1,22 @@
+# Connectivity assertions for 'gnp-windows-negated-deny-bypass'.
+#
+# Values encode the LINUX verdict (== the engine's prediction), so engine-only
+# `verify-all` passes. On a Windows cluster the Deny rule is dropped and the
+# database->server flow is ALLOWED by the fall-through Allow — the harness then
+# reports DIFF (engine=deny, cluster=allow) for that row. That DIFF is the proof
+# of the undocumented "negated Deny opens a hole" behaviour.
+assertions:
+  # client is exempted from the Deny, so it reaches the server on both dataplanes.
+  # This row agrees (engine=cluster=allow) and acts as the control.
+  - from: prod/client
+    to: prod/server
+    expect: allow
+    protocol: tcp
+    port: 8080
+  # database is a non-client source: Linux (and the engine) DENY it via the
+  # notSelector rule. Windows drops that rule and ALLOWS it -> DIFF here.
+  - from: prod/database
+    to: prod/server
+    expect: deny
+    protocol: tcp
+    port: 8080

@@ -1,0 +1,43 @@
+# Topology for testcase 'gnp-icmp-allow-windows'.
+# Intent: Allow only ICMP ingress to a Windows-hosted pod (GlobalNetworkPolicy,
+# types:[Ingress], single Allow rule for protocol ICMP). The receiver answers
+# ICMP (ping) but refuses TCP. Probed from a Linux sender: ICMP needs a ping
+# client, which only the Linux agnhost image bundles, so the harness always pins
+# the ICMP source to a Linux node — the receiver's Windows HNS ingress is what
+# the policy under test governs. Only runs under E2E_OS=windows (see meta.yaml).
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: winapp
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: winapp
+endpoints:
+  # No nodeSelector: as the source of an ICMP flow this pod is auto-pinned to a
+  # Linux node so it has busybox ping (the multi-arch agnhost pulls the Linux layer).
+  - id: winapp/sender
+    namespace: winapp
+    name: sender
+    ip: 10.0.0.1
+    labels:
+      app: sender
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+  # The receiver: pinned to a Windows node; its HNS ingress enforces the policy.
+  - id: winapp/receiver
+    namespace: winapp
+    name: receiver
+    ip: 10.0.0.2
+    labels:
+      app: receiver
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+port: 8080
+protocol: icmp

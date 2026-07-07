@@ -1,0 +1,13 @@
+# Connectivity assertions for 'gnp-windows-tier-flatten-pass-block'.
+#
+# The value encodes the LINUX verdict (== the engine's prediction), so engine-only
+# `verify-all` passes. On a Windows cluster the flattener rewrites the default
+# tier's trailing Pass to Block and never appends profiles, so client->server is
+# DENIED — the harness then reports DIFF (engine=allow, cluster=deny). That DIFF
+# is the proof of the undocumented tier-flattening behaviour.
+assertions:
+  - from: prod/client
+    to: prod/server
+    expect: allow
+    protocol: tcp
+    port: 8080

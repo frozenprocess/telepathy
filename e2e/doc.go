@@ -34,9 +34,9 @@
 //  1. Parse topology.yaml / assertions.yaml / policy.yaml with the api package
 //     (the same types the engine uses — no duplicate schema here).
 //  2. Realize the topology as real objects: Namespaces, ServiceAccounts, Pods
-//     (each running agnhost as a TCP/UDP/SCTP server plus a netshoot sidecar
-//     for ICMP), Services, Calico (Global)NetworkSets and HostEndpoints
-//     (realize.go).
+//     (each running a single agnhost container — a TCP/UDP/SCTP server that also
+//     provides busybox ping for ICMP probes), Services, Calico
+//     (Global)NetworkSets and HostEndpoints (realize.go).
 //  3. Wait for pods Ready, harvest their real IPs, and build a fictional->real
 //     IP map. Rewrite the topology, netsets, HEP IPs and any policy CIDR that
 //     contains a fictional endpoint IP so that BOTH the engine and the cluster

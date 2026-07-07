@@ -1,0 +1,44 @@
+# Topology for testcase 'gnp-windows-notports-deny-bypass'.
+# Intent: prove a negated-match (notPorts) DENY rule is silently dropped on
+# Windows/HNS, turning a port carve-out into allow-all. server (app=server) is the
+# policy target; it listens on 8080 (blocked on Linux) and 9090 (the excepted,
+# allowed port used as a control). Both pods run on Windows nodes so the receiver's
+# HNS ingress enforces the flattened policy. Only runs under E2E_OS=windows.
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+endpoints:
+  - id: prod/server
+    namespace: prod
+    name: server
+    ip: 10.0.0.1
+    labels:
+      app: server
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: alt
+        port: 9090
+        protocol: tcp
+  - id: prod/client
+    namespace: prod
+    name: client
+    ip: 10.0.0.2
+    labels:
+      app: client
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+port: 8080
+protocol: tcp

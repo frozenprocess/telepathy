@@ -1,0 +1,22 @@
+# A negated-match DENY rule: "deny every source that is NOT the client app",
+# followed by a blanket Allow. On Linux this is a working allow-list — only
+# app=client may reach the server; every other source hits the Deny.
+#
+# On Windows/HNS the first rule carries `notSelector`, a negative match criterion
+# Felix cannot render, so the WHOLE rule is dropped from the ACL list. What
+# remains is just the blanket Allow — every source reaches the server. The Deny
+# silently evaporates and the allow-list becomes allow-all. This is the
+# undocumented, security-relevant direction of the Windows negation limitation.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-deny-except-client
+spec:
+  selector: app == 'server'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      source:
+        notSelector: app == 'client'
+    - action: Allow

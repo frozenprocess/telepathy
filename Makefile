@@ -12,7 +12,7 @@
 #   make distclean  # also remove the Calico checkout and go.work
 
 CALICO_REPO    ?= https://github.com/projectcalico/calico.git
-CALICO_VERSION ?= v3.32.0
+CALICO_VERSION ?= master
 CALICO_DIR     ?= third_party/calico
 
 # Antrea source tree — the second CNI provider. It builds as its OWN binary
@@ -75,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-windows e2e-windows-down clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -279,6 +279,10 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 # Testcases can be found in e2e/testdata/ folder
 CLUSTER_NAME ?= telepathy-e2e
 PROVIDER    ?= calico
+# E2E_OS pins the OS the workload pods run on (linux|windows). windows runs every
+# policy against the Calico HNS dataplane on a joined Windows node (see
+# hacks/provision/calico-windows-up.sh) — needs Windows-compatible AGNHOST_IMAGE.
+E2E_OS      ?= linux
 
 # Stand up kind + the chosen CNI and compare every applicable e2e/testdata case's
 # real connectivity against the engine. Pick the CNI with PROVIDER=<name>, which
@@ -292,8 +296,21 @@ e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's r
 	@test -x ./hacks/provision/$(PROVIDER)-up.sh || { echo "unknown PROVIDER=$(PROVIDER): no hacks/provision/$(PROVIDER)-up.sh"; exit 1; }
 	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/$(PROVIDER)-up.sh
 	@[ "$(PROVIDER)" = calico ] && { lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"; }; true
-	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) \
+	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) E2E_OS=$(E2E_OS) \
 		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
+
+# Join a QEMU/libvirt Windows Server node to the running kind+Calico cluster and
+# install the Calico HNS dataplane on it, fully unattended. Requires libvirt
+# (virt-install/virsh/qemu-img) + genisoimage, and a Windows Server ISO:
+#   make e2e-windows WINDOWS_ISO=/path/to/windows-server-2022.iso
+# Reconfigures Calico for Windows (VXLAN/HNS) — run `make e2e` first for the
+# Linux side. Tear the node down with: make e2e-windows-down
+e2e-windows:  ## Join a libvirt Windows node to kind+Calico (needs WINDOWS_ISO=...)
+	@command -v virt-install >/dev/null || { echo "e2e-windows needs libvirt (virt-install) on PATH"; exit 1; }
+	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-windows-up.sh
+
+e2e-windows-down:  ## Remove the libvirt Windows node (leaves the kind cluster)
+	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-windows-down.sh
 
 # --- Cleanup ---------------------------------------------------------------
 clean:  ## Remove build artifacts

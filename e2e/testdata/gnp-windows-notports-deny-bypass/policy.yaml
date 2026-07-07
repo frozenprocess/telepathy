@@ -1,0 +1,22 @@
+# Deny TCP on every port EXCEPT 9090 (notPorts), then allow everything. On Linux
+# this blocks TCP/8080 (it is not the excepted port) while leaving 9090 open.
+#
+# On Windows/HNS the Deny rule carries `notPorts`, a negative match Felix cannot
+# render, so the WHOLE rule is dropped. Only the blanket Allow remains — TCP/8080
+# is now allowed. The port carve-out silently becomes allow-all: an undocumented,
+# security-relevant hole.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-deny-tcp-except-9090
+spec:
+  selector: app == 'server'
+  types:
+    - Ingress
+  ingress:
+    - action: Deny
+      protocol: TCP
+      destination:
+        notPorts:
+          - 9090
+    - action: Allow

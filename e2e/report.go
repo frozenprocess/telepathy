@@ -74,10 +74,22 @@ func (r *caseReport) mismatches() int {
 // other but not with the authored expectation (a questionable assertion), and
 // "ERR" when the probe itself failed.
 func (r *caseReport) render() string {
+	// Auto-size the variable-width FROM/TO columns to the widest value (headers
+	// included) so os-suffixed ids like "dns-system/coredns[windows]" stay aligned.
+	fromW, toW := len("FROM"), len("TO")
+	for _, rw := range r.rows {
+		if len(rw.from) > fromW {
+			fromW = len(rw.from)
+		}
+		if len(rw.to) > toW {
+			toW = len(rw.to)
+		}
+	}
+	format := fmt.Sprintf("  %%-%ds %%-%ds %%-5s %%-5s %%-7s %%-7s %%-7s %%s\n", fromW, toW)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "case %s\n", r.name)
-	fmt.Fprintf(&b, "  %-22s %-22s %-5s %-5s %-7s %-7s %-7s %s\n",
-		"FROM", "TO", "PORT", "PROTO", "EXPECT", "ENGINE", "CLUSTER", "VERDICT")
+	fmt.Fprintf(&b, format, "FROM", "TO", "PORT", "PROTO", "EXPECT", "ENGINE", "CLUSTER", "VERDICT")
 	for _, rw := range r.rows {
 		verdict := "ok"
 		switch {
@@ -90,8 +102,7 @@ func (r *caseReport) render() string {
 		case rw.expectMismatch:
 			verdict = "expect? (engine==cluster, != expect)"
 		}
-		fmt.Fprintf(&b, "  %-22s %-22s %-5s %-5s %-7s %-7s %-7s %s\n",
-			rw.from, rw.to, portStr(rw.port), rw.proto, rw.expect, dash(rw.engine), dash(rw.cluster), verdict)
+		fmt.Fprintf(&b, format, rw.from, rw.to, portStr(rw.port), rw.proto, rw.expect, dash(rw.engine), dash(rw.cluster), verdict)
 	}
 	if d := r.details(); d != "" {
 		b.WriteString("\n  probe output (failed rows):\n")

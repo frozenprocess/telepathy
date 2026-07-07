@@ -1,0 +1,18 @@
+# protocol: ICMP ingress to a Windows-hosted pod — the Windows/HNS dataplane
+# equivalent of gnp-icmp-allow. types:[Ingress] makes the implicit default-deny
+# cover every other protocol, so the receiver answers pings but refuses TCP.
+#
+# Exercises the Linux-sender -> Windows-receiver ICMP path: the sender pod is
+# pinned to Linux (it needs busybox ping; the Windows agnhost image has none),
+# while the receiver's HNS ingress is what the policy under test governs.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-allow-icmp-only
+spec:
+  selector: app == 'receiver'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: ICMP

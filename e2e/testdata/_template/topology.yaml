@@ -45,6 +45,9 @@ endpoints:
         port: 8081
         protocol: udp
     # node: <node>          # OPTIONAL — pin to a node (only matters for HEP cases)
+    # nodeSelector:         # OPTIONAL — land the pod on a matching node, e.g. a
+    #   kubernetes.io/os: windows   # Windows node. e2e scheduling only; the engine
+                            #        ignores it (nodeName wins if `node` is also set)
     # serviceAccountName: x # OPTIONAL — for serviceAccounts.selector rules
     # role: workload        # OPTIONAL — "workload" (default) | "external" | "host"
     # unpoliced: false      # OPTIONAL — node with no HEP: its own traffic is

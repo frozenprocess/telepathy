@@ -1,0 +1,11 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Regression guard for the engine's named-port matching. A destination named port
+# (`ports: [http]`) used to deny by default: Felix compiles it into
+# DstNamedPortIpSetIds with "ip,proto:port" members, but the app-policy checker's
+# matchPort looked those up by bare port number and never found them. graph.go's
+# fixDstNamedPorts moves destination named ports onto DstIpPortSetIds, which the
+# checker matches IP-aware. This case asserts the named port is now honoured (8080
+# allowed) and remains port-specific (9090 denied). Not Windows-gated — this is
+# Linux-correct behaviour the engine must model on every provider.

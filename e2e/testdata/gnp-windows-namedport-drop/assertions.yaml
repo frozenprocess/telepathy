@@ -1,0 +1,12 @@
+# Connectivity assertions for 'gnp-windows-namedport-drop'.
+#
+# The value encodes the LINUX verdict (== engine prediction), so engine-only
+# `verify-all` passes. On a Windows cluster the named-port rule is dropped and
+# TCP/8080 falls to the implicit default-deny — the harness reports DIFF
+# (engine=allow, cluster=deny). That DIFF is the proof of the undocumented drop.
+assertions:
+  - from: prod/client
+    to: prod/server
+    expect: allow
+    protocol: tcp
+    port: 8080

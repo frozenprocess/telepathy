@@ -1,0 +1,16 @@
+# Connectivity assertions for 'gnp-named-port-ingress'.
+# The named port http resolves to 8080 on the server, so TCP/8080 is allowed;
+# TCP/9090 is not the named port and falls to the implicit default-deny. Both
+# verdicts agree between the engine and a Linux dataplane (this is Linux-correct
+# behaviour), so the case passes in engine-only verify-all and on a cluster.
+assertions:
+  - from: prod/client
+    to: prod/server
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - from: prod/client
+    to: prod/server
+    expect: deny
+    protocol: tcp
+    port: 9090

@@ -1,0 +1,21 @@
+# Allow TCP ingress to the server on the port it names "http" (8080). On Linux the
+# named port resolves to (server-IP, tcp, 8080) and the flow is allowed.
+#
+# On Windows/HNS the rule references a named port, which Felix compiles into a
+# named-port IP set that HNS cannot express, so the WHOLE rule is dropped. With
+# types:[Ingress] only the implicit default-deny remains — TCP/8080 is refused.
+# Same policy, opposite result: allowed on Linux, denied on Windows.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: win-allow-http-named-port
+spec:
+  selector: app == 'server'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        ports:
+          - http

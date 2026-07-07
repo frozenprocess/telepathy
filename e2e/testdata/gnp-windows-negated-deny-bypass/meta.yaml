@@ -1,0 +1,18 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. This case exists to expose an UNDOCUMENTED Windows/HNS divergence
+# from Linux, so it only makes sense against a Windows dataplane. Skip (don't
+# fail) unless the run targets Windows.
+#
+# What it proves: Felix's Windows renderer silently drops any rule with a negated
+# match criterion (policysets.go: ruleHasNegativeMatches -> ErrNotSupported). When
+# the dropped rule is a DENY, the flow it was meant to block is left to the
+# following Allow — so Windows is MORE PERMISSIVE than Linux. This "negative match
+# on a Deny opens a hole" direction is not in Calico's docs.
+#
+# How it proves it: the assertions encode the LINUX verdict, which is exactly what
+# the (Linux-modelled) engine predicts, so engine-only `verify-all` passes. On a
+# Windows cluster the dataplane allows db->server while the engine still says deny
+# -> the harness reports DIFF (engine != cluster). That DIFF is the finding.
+requiresOS: windows

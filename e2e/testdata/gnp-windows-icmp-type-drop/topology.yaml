@@ -1,0 +1,43 @@
+# Topology for testcase 'gnp-windows-icmp-type-drop'.
+# Intent: prove that an ICMP type/code match makes Felix drop the whole rule on
+# Windows/HNS. The receiver (app=receiver) is the policy target, pinned to a
+# Windows node so its HNS ingress enforces the policy. The sender is auto-pinned
+# to a Linux node (ICMP needs busybox ping, which the Windows image lacks) — the
+# same Linux-sender -> Windows-receiver ICMP path as gnp-icmp-allow-windows.
+# Only runs under E2E_OS=windows (see meta.yaml).
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: winapp
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: winapp
+endpoints:
+  # No nodeSelector: as the source of an ICMP flow this pod is auto-pinned to a
+  # Linux node so it has busybox ping.
+  - id: winapp/sender
+    namespace: winapp
+    name: sender
+    ip: 10.0.0.1
+    labels:
+      app: sender
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+  # The receiver: pinned to a Windows node; its HNS ingress enforces the policy.
+  - id: winapp/receiver
+    namespace: winapp
+    name: receiver
+    ip: 10.0.0.2
+    labels:
+      app: receiver
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+port: 8080
+protocol: icmp

@@ -1,0 +1,42 @@
+# Topology for testcase 'gnp-windows-icmp-type-deny-bypass'.
+# Intent: prove an ICMP type/code match on a DENY rule is silently dropped on
+# Windows/HNS, opening a hole. The receiver (app=receiver) is the policy target,
+# pinned to a Windows node so its HNS ingress enforces the policy. The sender is
+# auto-pinned to a Linux node (ICMP needs busybox ping) — the Linux-sender ->
+# Windows-receiver path. Only runs under E2E_OS=windows.
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: winapp
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: winapp
+endpoints:
+  # No nodeSelector: as the source of an ICMP flow this pod is auto-pinned to a
+  # Linux node so it has busybox ping.
+  - id: winapp/sender
+    namespace: winapp
+    name: sender
+    ip: 10.0.0.1
+    labels:
+      app: sender
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+  # The receiver: pinned to a Windows node; its HNS ingress enforces the policy.
+  - id: winapp/receiver
+    namespace: winapp
+    name: receiver
+    ip: 10.0.0.2
+    labels:
+      app: receiver
+    nodeSelector:
+      kubernetes.io/os: windows
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+port: 8080
+protocol: icmp

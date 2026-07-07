@@ -31,7 +31,7 @@ func TestManifestPod(t *testing.T) {
 		ServiceAccountName: "fe-sa",
 		Node:               "worker-1",
 	}
-	doc := podManifest(ep, serverPlan{tcp: []int{8080}, udp: []int{8081}, sctp: []int{9000}}, map[string]bool{"worker-1": true}, "agn:1", "ns:1")
+	doc := podManifest(ep, serverPlan{tcp: []int{8080}, udp: []int{8081}, sctp: []int{9000}}, map[string]bool{"worker-1": true}, "agn:1")
 	m := parseYAML(t, "pod", doc)
 	if m["apiVersion"] != "v1" || m["kind"] != "Pod" {
 		t.Fatalf("pod apiVersion/kind wrong: %v", m)
@@ -49,8 +49,8 @@ func TestManifestPod(t *testing.T) {
 		t.Fatalf("pod spec wrong: %v", spec)
 	}
 	conts := spec["containers"].([]any)
-	if len(conts) != 2 {
-		t.Fatalf("want 2 containers, got %d", len(conts))
+	if len(conts) != 1 {
+		t.Fatalf("want 1 container (agnhost, no tools sidecar), got %d", len(conts))
 	}
 	agn := conts[0].(map[string]any)
 	cmd := agn["command"].([]any)
@@ -72,7 +72,7 @@ func TestManifestPod(t *testing.T) {
 // listener and probes to it are REFUSED.
 func TestManifestPodMultipleTCPPorts(t *testing.T) {
 	ep := api.Endpoint{Name: "p", Namespace: "n", Labels: map[string]string{"a": "b"}}
-	doc := podManifest(ep, serverPlan{tcp: []int{8080, 9090}, udp: []int{8081}}, nil, "agn", "ns")
+	doc := podManifest(ep, serverPlan{tcp: []int{8080, 9090}, udp: []int{8081}}, nil, "agn")
 	m := parseYAML(t, "pod", doc)
 	cmd := m["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["command"].([]any)
 	joined := ""
@@ -89,12 +89,31 @@ func TestManifestPodMultipleTCPPorts(t *testing.T) {
 
 func TestManifestPodOmitsNodeNameForUnknownNode(t *testing.T) {
 	ep := api.Endpoint{Name: "p", Namespace: "n", Node: "ghost", Labels: map[string]string{"a": "b"}}
-	doc := podManifest(ep, serverPlan{tcp: []int{8080}, udp: []int{8081}}, map[string]bool{"worker-1": true}, "agn", "ns")
+	doc := podManifest(ep, serverPlan{tcp: []int{8080}, udp: []int{8081}}, map[string]bool{"worker-1": true}, "agn")
 	if strings.Contains(doc, "nodeName") {
 		t.Fatalf("nodeName must be omitted for a node not in the cluster:\n%s", doc)
 	}
 	if strings.Contains(doc, "sctp-port") {
 		t.Fatalf("sctp flag must be absent when sctpPort==0:\n%s", doc)
+	}
+}
+
+func TestManifestPodNodeSelector(t *testing.T) {
+	ep := api.Endpoint{
+		Name: "p", Namespace: "n", Labels: map[string]string{"a": "b"},
+		NodeSelector: map[string]string{"kubernetes.io/os": "windows"},
+	}
+	doc := podManifest(ep, serverPlan{tcp: []int{8080}, udp: []int{8081}}, nil, "agn")
+	spec := parseYAML(t, "pod", doc)["spec"].(map[string]any)
+	sel, ok := spec["nodeSelector"].(map[string]any)
+	if !ok || sel["kubernetes.io/os"] != "windows" {
+		t.Fatalf("nodeSelector not rendered: %v", spec["nodeSelector"])
+	}
+	// No selector => no nodeSelector block.
+	bare := podManifest(api.Endpoint{Name: "p", Namespace: "n", Labels: map[string]string{"a": "b"}},
+		serverPlan{tcp: []int{8080}, udp: []int{8081}}, nil, "agn")
+	if strings.Contains(bare, "nodeSelector") {
+		t.Fatalf("nodeSelector must be omitted when empty:\n%s", bare)
 	}
 }
 

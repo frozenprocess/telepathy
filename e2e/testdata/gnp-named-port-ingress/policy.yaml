@@ -1,0 +1,19 @@
+# Allow TCP ingress to the server on the port it names "http" (8080). With
+# types:[Ingress] the implicit default-deny covers every other port, so 9090 is
+# refused. The rule references the port BY NAME, exercising Calico's named-port
+# resolution: the named port compiles to the (endpoint-IP, proto, port) tuples of
+# every endpoint that defines a port called http.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: allow-http-named-port
+spec:
+  selector: app == 'server'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        ports:
+          - http

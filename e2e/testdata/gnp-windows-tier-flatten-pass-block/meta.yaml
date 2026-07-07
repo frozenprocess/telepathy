@@ -1,0 +1,25 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. Exposes an UNDOCUMENTED Windows/HNS divergence from Linux tied to
+# how Felix flattens tiers, so it only makes sense against a Windows dataplane.
+# Skip (don't fail) unless the run targets Windows.
+#
+# What it proves: HNS has no native concept of tiers, so Felix flattens all tiers
+# into one ACL list at program time (felix/dataplane/windows/flattener.go). Two
+# things happen that don't on Linux:
+#   1. A `Pass` in the LAST tier is rewritten to `Block` (flattener.go:42-47).
+#   2. Profiles are only appended as a fallback tier when the default tier has no
+#      policy for the endpoint (hns.go renderHNSEndpoint).
+# So when the default (last) tier has `defaultAction: Pass` AND a policy that
+# selects the endpoint, a flow that matches no rule falls through to the trailing
+# Pass. On Linux that Pass means "fall through to the profiles", and the
+# namespace's default profile ALLOWS it. On Windows the trailing Pass has become
+# a Block and the profiles were never appended — so the same flow is DENIED.
+#
+# How it proves it: assertions encode the LINUX verdict (== engine prediction), so
+# engine-only `verify-all` passes. On a Windows cluster client->server is denied
+# while the engine still says allow -> DIFF (engine != cluster). Verified out of
+# band with `telepathy hns`: the server's rendered ingress is
+# [Allow remote=<server>, Block any] — client falls to the Block.
+requiresOS: windows

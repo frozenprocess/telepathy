@@ -1,0 +1,13 @@
+# Connectivity assertions for 'gnp-icmp-allow-windows'.
+# The Windows receiver answers ICMP (allowed) but refuses TCP (implicit
+# default-deny under types:[Ingress]). Probed from a Linux sender.
+assertions:
+  - from: winapp/sender
+    to: winapp/receiver
+    expect: allow
+    protocol: icmp
+  - from: winapp/sender
+    to: winapp/receiver
+    expect: deny
+    protocol: tcp
+    port: 8080

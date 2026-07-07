@@ -67,11 +67,11 @@ func Capabilities() []Capability {
 		{Name: "source/destination.namespaceSelector", Supported: true},
 		{Name: "source/destination.nets / notNets", Supported: true},
 		{Name: "source/destination.ports / notPorts", Supported: true,
-			Notes: "numeric and ranges are fully supported. Named ports are accepted on " +
-				"endpoints and projected into the calc graph, but the app-policy/checker's " +
-				"matchPort path looks up named-port IPSets via port-only strings while Felix " +
-				"populates them with 'ip,proto:port' tuples — so rules that reference a named " +
-				"port deny by default. Use numeric ports in policies for now."},
+			Notes: "numeric and ranges are fully supported. DESTINATION named ports are " +
+				"matched too: graph.go's fixDstNamedPorts moves them onto DstIpPortSetIds, " +
+				"which the checker matches IP-aware via 'ip,proto:port' tuples. Source and " +
+				"negated named ports, and rules mixing numeric+named ports in one list, have " +
+				"no correct checker path and deny by default — use numeric ports there."},
 		{Name: "source/destination.serviceAccounts.names / selector", Supported: true,
 			Notes: "requires Endpoint.ServiceAccountName + matching Request.ServiceAccounts entry"},
 		{Name: "source/destination.services", Supported: true,
@@ -169,13 +169,15 @@ func lintPolicies(req Request) (warnings, errs []string) {
 		// The Capabilities() entries spell out the residual caveats (preDNAT
 		// can't see Service ClusterIPs without a Service-IP probe mode, etc.).
 
-		// Named-port references: see Capabilities() — accepted but the
-		// checker can't match them, so they currently deny by default.
+		// Named-port references: see Capabilities(). Destination named ports are
+		// now matched correctly (fixDstNamedPorts in graph.go moves them onto
+		// DstIpPortSetIds). Source, negated, and mixed numeric+named references
+		// still have no correct checker path and deny by default.
 		if hasNamedPortRef(p.YAML) {
 			warnings = append(warnings,
-				fmt.Sprintf("%s: references a named port; the app-policy/checker named-port "+
-					"match is incompatible with Felix's IPSet encoding — rules using named "+
-					"ports will deny. Rewrite with numeric ports.", name))
+				fmt.Sprintf("%s: references a named port; destination named ports are matched, "+
+					"but source/negated named ports and rules mixing numeric and named ports in "+
+					"one list still deny by default. Use numeric ports there.", name))
 		}
 	}
 	return

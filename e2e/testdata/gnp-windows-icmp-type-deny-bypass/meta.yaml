@@ -1,0 +1,18 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. The Deny-direction companion to gnp-windows-icmp-type-drop: an
+# ICMP type/code match on a DENY rule silently evaporates on HNS, opening a hole.
+# Skip (don't fail) unless the run targets Windows.
+#
+# What it proves: Felix drops any rule carrying an ICMP type/code (policysets.go:
+# pRule.Icmp != nil). Here the dropped rule is a Deny of echo-request, followed by
+# an Allow of ICMP. On Linux the echo (ping) is blocked; on Windows the Deny is
+# gone, so the ping is allowed by the following Allow. Windows is more permissive.
+#
+# How it proves it: assertions encode the LINUX verdict (== engine prediction), so
+# engine-only `verify-all` passes. On a Windows cluster the receiver answers the
+# ping while the engine still says deny -> DIFF (engine != cluster). The Linux
+# sender is auto-pinned to a Linux node (it needs busybox ping); the receiver's
+# Windows HNS ingress is the dataplane under test.
+requiresOS: windows

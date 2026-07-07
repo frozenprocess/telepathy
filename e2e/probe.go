@@ -120,9 +120,11 @@ func probeOnce(ctx context.Context, c *cluster, src probeSource, dst probeTarget
 			// agnhost has no ICMP client; north-south cases probe L4 (NodePort).
 			return false, "", fmt.Errorf("icmp probe not supported from an external observer")
 		}
-		// ICMP has no port; ping from the netshoot sidecar.
-		out, exitErr := c.exec(ectx, src.ns, src.pod, "tools",
-			"ping", "-c", "1", "-W", "2", dst.ip)
+		// The sender needs a ping client, which only the Linux agnhost image has, so
+		// the harness always pins ICMP-source pods to a Linux node (see e2e_test.go).
+		// ICMP has no port; ping from the agnhost container (bundles busybox ping).
+		out, exitErr := c.exec(ectx, src.ns, src.pod, "agnhost",
+			"/bin/ping", "-c", "1", "-W", "2", dst.ip)
 		if ectx.Err() == context.DeadlineExceeded {
 			return false, out, fmt.Errorf("probe exec exceeded %s (exec channel stalled)", cfg.ProbeExecTimeout)
 		}
