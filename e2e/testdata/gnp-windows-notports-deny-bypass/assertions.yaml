@@ -1,20 +1,8 @@
-# Connectivity assertions for 'gnp-windows-notports-deny-bypass'.
-#
-# Values encode the LINUX verdict (== engine prediction), so engine-only
-# `verify-all` passes. On a Windows cluster the notPorts Deny rule is dropped and
-# TCP/8080 is allowed by the fall-through Allow — the harness reports DIFF
-# (engine=deny, cluster=allow) on the :8080 row. That DIFF is the proof.
+# Values encode the LINUX verdict (== engine prediction). Allow-flows are same-OS.
 assertions:
-  # 8080 is NOT the excepted port, so Linux (and the engine) DENY it. Windows drops
-  # the notPorts Deny rule and ALLOWS it -> DIFF here.
-  - from: prod/client
-    to: prod/server
-    expect: deny
-    protocol: tcp
-    port: 8080
-  # 9090 is the excepted port: allowed on both dataplanes (control row, no DIFF).
-  - from: prod/client
-    to: prod/server
-    expect: allow
-    protocol: tcp
-    port: 9090
+  # 8080: Linux DENIES (actual), Windows drops the notPorts Deny -> ALLOWS -> DIFF.
+  - {from: prod/client-lin, to: prod/server-lin, expect: deny,  protocol: tcp, port: 8080}
+  - {from: prod/client-win, to: prod/server-win, expect: deny,  protocol: tcp, port: 8080}
+  # 9090: the excepted port, allowed on both (controls).
+  - {from: prod/client-lin, to: prod/server-lin, expect: allow, protocol: tcp, port: 9090}
+  - {from: prod/client-win, to: prod/server-win, expect: allow, protocol: tcp, port: 9090}

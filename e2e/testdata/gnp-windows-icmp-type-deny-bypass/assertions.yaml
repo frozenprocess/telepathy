@@ -1,13 +1,6 @@
-# Connectivity assertions for 'gnp-windows-icmp-type-deny-bypass'.
-#
-# Values encode the LINUX verdict (== engine prediction), so engine-only
-# `verify-all` passes. On a Windows cluster the icmp.type Deny rule is dropped and
-# the ping is allowed by the following ICMP Allow — the harness reports DIFF
-# (engine=deny, cluster=allow) on the ICMP row. That DIFF is the proof.
+# Values encode the LINUX verdict (== engine prediction).
 assertions:
-  # Linux denies the echo via the type-8 Deny; Windows drops that rule and the ping
-  # is allowed -> DIFF.
-  - from: winapp/sender
-    to: winapp/receiver
-    expect: deny
-    protocol: icmp
+  # Linux DENIES the echo via the type-8 Deny (actual behaviour).
+  - {from: winapp/sender, to: winapp/receiver-lin, expect: deny, protocol: icmp}
+  # Windows drops the icmp.type Deny -> the ping is allowed -> DIFF.
+  - {from: winapp/sender, to: winapp/receiver-win, expect: deny, protocol: icmp}

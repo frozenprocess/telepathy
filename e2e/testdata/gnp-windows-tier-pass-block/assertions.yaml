@@ -1,0 +1,29 @@
+# Connectivity assertions for 'gnp-windows-tier-pass-block'.
+# Each allow-flow is probed SAME-OS to rule out cross-OS networking confounds.
+# Values encode the LINUX verdict (== engine prediction).
+assertions:
+  # ACTUAL behaviour, Linux->Linux: Pass rule -> namespace profile -> allow.
+  # engine=allow, cluster=allow -> ok. Shows what the policy is meant to do.
+  - from: prod/client-lin
+    to: prod/server-lin
+    expect: allow
+    protocol: tcp
+    port: 8080
+  # Windows divergence, Windows->Windows (a direction the other cases prove works):
+  # trailing Pass flattened to Block, no profile -> deny. engine=allow -> DIFF.
+  - from: prod/client-win
+    to: prod/server-win
+    expect: allow
+    protocol: tcp
+    port: 8080
+  # Deny controls (deny-expected, robust to any confound).
+  - from: prod/other
+    to: prod/server-lin
+    expect: deny
+    protocol: tcp
+    port: 8080
+  - from: prod/other
+    to: prod/server-win
+    expect: deny
+    protocol: tcp
+    port: 8080

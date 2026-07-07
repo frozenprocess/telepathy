@@ -1,0 +1,23 @@
+# A default-tier GlobalNetworkPolicy (no `tier:` field => default tier, which
+# keeps its required defaultAction: Deny) whose only rule is an explicit
+# `action: Pass` for source app=client.
+#
+# On Linux: client matches the Pass rule, so evaluation leaves the default tier
+# (the last tier) and falls through to the namespace profile, which allows.
+#
+# On Windows/HNS: tiers are flattened; a Pass in the last tier is rewritten to
+# Block, and because the default tier has a policy the profile is never appended.
+# So the Pass-for-client becomes Block-for-client -> denied. Non-client sources
+# hit the default tier's end-of-tier deny on both dataplanes.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: server-pass-client
+spec:
+  selector: app == 'server'
+  types:
+    - Ingress
+  ingress:
+    - action: Pass
+      source:
+        selector: app == 'client'

@@ -16,3 +16,9 @@ flavor: calico
 # sender is auto-pinned to a Linux node (it needs busybox ping); the receiver's
 # Windows HNS ingress is the dataplane under test.
 requiresOS: windows
+#
+# This case now mirrors the target on both OSes and probes each allow-flow SAME-OS:
+# the -lin (Linux) row shows the ACTUAL/intended behaviour (engine == cluster, ok),
+# beside the -win (Windows) row that DIFFs. Allow-flows must be same-OS because
+# Windows<->Linux pod TCP is unreliable in the test cluster and would otherwise look
+# like a policy deny.

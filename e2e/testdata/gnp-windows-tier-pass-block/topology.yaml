@@ -1,0 +1,62 @@
+# Topology for testcase 'gnp-windows-tier-pass-block'.
+# Intent: show the tier-flattening divergence with each allow-flow probed SAME-OS,
+# so no cross-OS pod-networking confound can be mistaken for policy. One default-tier
+# GNP (defaultAction stays Deny) with an explicit `action: Pass` rule for app=client
+# selects two servers (app==server), one per OS:
+#   - client-lin -> server-lin (Linux->Linux): Pass falls through the last tier to
+#     the namespace profile -> ALLOW. Actual/intended behaviour (engine == cluster).
+#   - client-win -> server-win (Windows->Windows): the flattener rewrites the
+#     trailing Pass to Block, no profile appended -> DENY. engine says allow -> DIFF.
+# 'other' (app=other) is a deny control (deny-expected, so robust to any confound).
+# Only runs under E2E_OS=windows; the Linux endpoints are pinned to Linux explicitly.
+#
+# Self-contained telepathy Request. Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+endpoints:
+  - id: prod/server-win
+    namespace: prod
+    name: server-win
+    ip: 10.0.0.1
+    labels: {app: server}
+    nodeSelector: {kubernetes.io/os: windows}
+    ports:
+      - {name: http, port: 8080, protocol: tcp}
+  - id: prod/server-lin
+    namespace: prod
+    name: server-lin
+    ip: 10.0.0.4
+    labels: {app: server}
+    nodeSelector: {kubernetes.io/os: linux}
+    ports:
+      - {name: http, port: 8080, protocol: tcp}
+  - id: prod/client-win
+    namespace: prod
+    name: client-win
+    ip: 10.0.0.2
+    labels: {app: client}
+    nodeSelector: {kubernetes.io/os: windows}
+    ports:
+      - {name: http, port: 8080, protocol: tcp}
+  - id: prod/client-lin
+    namespace: prod
+    name: client-lin
+    ip: 10.0.0.5
+    labels: {app: client}
+    nodeSelector: {kubernetes.io/os: linux}
+    ports:
+      - {name: http, port: 8080, protocol: tcp}
+  - id: prod/other
+    namespace: prod
+    name: other
+    ip: 10.0.0.3
+    labels: {app: other}
+    nodeSelector: {kubernetes.io/os: windows}
+    ports:
+      - {name: http, port: 8080, protocol: tcp}
+port: 8080
+protocol: tcp

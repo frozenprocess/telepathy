@@ -203,11 +203,37 @@ func jsonStrArray(items []string) string {
 // gap). ping needs a raw ICMP socket; kind nodes leave net.ipv4.ping_group_range
 // closed, so we grant CAP_NET_RAW or every ICMP probe reads as a false deny.
 // (On Windows the agnhost image has no ping; ICMP probes are skipped there.)
-func appendAgnhostContainer(containers *yamlNode, image string, plan serverPlan) {
+func appendAgnhostContainer(containers *yamlNode, image string, plan serverPlan, ports []api.EndpointPort) {
 	containers.item(func(c *yamlNode) {
 		c.raw("name", "agnhost")
 		c.scalar("image", image)
 		c.raw("command", agnhostCommand(plan))
+		// Declare named container ports so Calico's WorkloadEndpoint carries the
+		// port names — this is how a policy's named-port reference (e.g.
+		// destination.ports: [http]) resolves on the real cluster. Without it the
+		// named-port IP set is empty and the rule matches nothing on BOTH
+		// dataplanes (a harness gap, not a policy behaviour).
+		named := ports[:0:0]
+		for _, p := range ports {
+			if p.Name != "" {
+				named = append(named, p)
+			}
+		}
+		if len(named) > 0 {
+			c.block("ports", func(ps *yamlNode) {
+				for _, p := range named {
+					proto := p.Protocol
+					if proto == "" {
+						proto = "tcp"
+					}
+					ps.item(func(pn *yamlNode) {
+						pn.raw("containerPort", strconv.Itoa(p.Port))
+						pn.scalar("name", p.Name)
+						pn.raw("protocol", strings.ToUpper(proto))
+					})
+				}
+			})
+		}
 		c.block("securityContext", func(sc *yamlNode) {
 			sc.block("capabilities", func(cap *yamlNode) {
 				cap.scalarSeq("add", []string{"NET_RAW"})
@@ -239,7 +265,7 @@ func podManifest(e api.Endpoint, plan serverPlan, nodeExists map[string]bool, ag
 		// windows). Omitted when empty; ignored by kubelet if nodeName is also set.
 		s.labels("nodeSelector", e.NodeSelector)
 		s.block("containers", func(cs *yamlNode) {
-			appendAgnhostContainer(cs, agnhost, plan)
+			appendAgnhostContainer(cs, agnhost, plan, e.Ports)
 		})
 	})
 	return d.String()
@@ -260,7 +286,7 @@ func hostPodManifest(name, node string, plan serverPlan, agnhost string) string 
 		s.raw("terminationGracePeriodSeconds", "1")
 		s.scalar("nodeName", node)
 		s.block("containers", func(cs *yamlNode) {
-			appendAgnhostContainer(cs, agnhost, plan)
+			appendAgnhostContainer(cs, agnhost, plan, nil)
 		})
 	})
 	return d.String()

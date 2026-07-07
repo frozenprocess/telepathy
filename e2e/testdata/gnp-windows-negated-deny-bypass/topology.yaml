@@ -1,54 +1,20 @@
 # Topology for testcase 'gnp-windows-negated-deny-bypass'.
-# Intent: prove that a negated-match DENY rule is silently dropped on Windows/HNS,
-# turning a Linux allow-list into an allow-all. server (app=server) is the policy
-# target; client (app=client) is the one source the Deny exempts; database
-# (app=database) is a source the Deny is meant to block on Linux. All three pods
-# run on Windows nodes so the receiver's HNS ingress is what enforces the policy.
-# Only runs under E2E_OS=windows (see meta.yaml).
-#
-# Self-contained telepathy Request. Run:
-#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+# Mirrored on both OSes so the divergence shows beside the actual Linux behaviour,
+# with every allow-flow probed SAME-OS (a Windows<->Linux pod-TCP confound would
+# otherwise masquerade as policy). Policy selector app==server matches both server
+# twins; the notSelector Deny (source not app=client) is meant to block database.
+#   - Linux: Deny bites -> database denied (actual). Windows: Deny rule dropped ->
+#     database allowed (DIFF). client is exempt -> allowed on both.
+# Only runs under E2E_OS=windows; -lin endpoints pinned to Linux explicitly.
 namespaces:
   - name: prod
-    labels:
-      purpose: policy-eval
-      kubernetes.io/metadata.name: prod
+    labels: {purpose: policy-eval, kubernetes.io/metadata.name: prod}
 endpoints:
-  - id: prod/server
-    namespace: prod
-    name: server
-    ip: 10.0.0.1
-    labels:
-      app: server
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-  - id: prod/client
-    namespace: prod
-    name: client
-    ip: 10.0.0.2
-    labels:
-      app: client
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-  - id: prod/database
-    namespace: prod
-    name: database
-    ip: 10.0.0.3
-    labels:
-      app: database
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
+  - {id: prod/server-win,   namespace: prod, name: server-win,   ip: 10.0.0.1, labels: {app: server},   nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/server-lin,   namespace: prod, name: server-lin,   ip: 10.0.0.4, labels: {app: server},   nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/client-win,   namespace: prod, name: client-win,   ip: 10.0.0.2, labels: {app: client},   nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/client-lin,   namespace: prod, name: client-lin,   ip: 10.0.0.5, labels: {app: client},   nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/database-win, namespace: prod, name: database-win, ip: 10.0.0.3, labels: {app: database}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/database-lin, namespace: prod, name: database-lin, ip: 10.0.0.6, labels: {app: database}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
 port: 8080
 protocol: tcp

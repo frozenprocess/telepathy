@@ -1,40 +1,15 @@
 # Topology for testcase 'gnp-windows-namedport-drop'.
-# Intent: prove a named-port reference makes Felix drop the whole rule on
-# Windows/HNS. server (app=server) names port 8080 "http" and is the policy
-# target; client is the source. Both pods run on Windows nodes so the receiver's
-# HNS ingress enforces the policy. Only runs under E2E_OS=windows (see meta.yaml).
-#
-# Self-contained telepathy Request. Run:
-#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+# Mirrored on both OSes, allow-flow probed SAME-OS. Policy allows TCP on the named
+# port http (=8080). Linux honours the named port (allow, actual); Windows drops
+# the named-port rule (deny, DIFF).
+# Only runs under E2E_OS=windows; -lin endpoints pinned to Linux explicitly.
 namespaces:
   - name: prod
-    labels:
-      purpose: policy-eval
-      kubernetes.io/metadata.name: prod
+    labels: {purpose: policy-eval, kubernetes.io/metadata.name: prod}
 endpoints:
-  - id: prod/server
-    namespace: prod
-    name: server
-    ip: 10.0.0.1
-    labels:
-      app: server
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-  - id: prod/client
-    namespace: prod
-    name: client
-    ip: 10.0.0.2
-    labels:
-      app: client
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
+  - {id: prod/server-win, namespace: prod, name: server-win, ip: 10.0.0.1, labels: {app: server}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/server-lin, namespace: prod, name: server-lin, ip: 10.0.0.4, labels: {app: server}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/client-win, namespace: prod, name: client-win, ip: 10.0.0.2, labels: {app: client}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/client-lin, namespace: prod, name: client-lin, ip: 10.0.0.5, labels: {app: client}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
 port: 8080
 protocol: tcp

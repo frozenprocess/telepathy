@@ -16,3 +16,9 @@ flavor: calico
 # Windows cluster the dataplane allows db->server while the engine still says deny
 # -> the harness reports DIFF (engine != cluster). That DIFF is the finding.
 requiresOS: windows
+#
+# This case now mirrors the target on both OSes and probes each allow-flow SAME-OS:
+# the -lin (Linux) row shows the ACTUAL/intended behaviour (engine == cluster, ok),
+# beside the -win (Windows) row that DIFFs. Allow-flows must be same-OS because
+# Windows<->Linux pod TCP is unreliable in the test cluster and would otherwise look
+# like a policy deny.

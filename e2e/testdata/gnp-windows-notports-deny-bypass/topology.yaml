@@ -1,44 +1,15 @@
 # Topology for testcase 'gnp-windows-notports-deny-bypass'.
-# Intent: prove a negated-match (notPorts) DENY rule is silently dropped on
-# Windows/HNS, turning a port carve-out into allow-all. server (app=server) is the
-# policy target; it listens on 8080 (blocked on Linux) and 9090 (the excepted,
-# allowed port used as a control). Both pods run on Windows nodes so the receiver's
-# HNS ingress enforces the flattened policy. Only runs under E2E_OS=windows.
-#
-# Self-contained telepathy Request. Run:
-#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+# Mirrored on both OSes, allow-flows probed SAME-OS. Policy (Deny TCP notPorts 9090,
+# then Allow) blocks 8080 on Linux but the notPorts Deny is dropped on Windows.
+#   - Linux: 8080 denied (actual), 9090 allowed. Windows: 8080 allowed (DIFF).
+# Only runs under E2E_OS=windows; -lin endpoints pinned to Linux explicitly.
 namespaces:
   - name: prod
-    labels:
-      purpose: policy-eval
-      kubernetes.io/metadata.name: prod
+    labels: {purpose: policy-eval, kubernetes.io/metadata.name: prod}
 endpoints:
-  - id: prod/server
-    namespace: prod
-    name: server
-    ip: 10.0.0.1
-    labels:
-      app: server
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-      - name: alt
-        port: 9090
-        protocol: tcp
-  - id: prod/client
-    namespace: prod
-    name: client
-    ip: 10.0.0.2
-    labels:
-      app: client
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
+  - {id: prod/server-win, namespace: prod, name: server-win, ip: 10.0.0.1, labels: {app: server}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}, {name: alt, port: 9090, protocol: tcp}]}
+  - {id: prod/server-lin, namespace: prod, name: server-lin, ip: 10.0.0.4, labels: {app: server}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}, {name: alt, port: 9090, protocol: tcp}]}
+  - {id: prod/client-win, namespace: prod, name: client-win, ip: 10.0.0.2, labels: {app: client}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/client-lin, namespace: prod, name: client-lin, ip: 10.0.0.5, labels: {app: client}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
 port: 8080
 protocol: tcp

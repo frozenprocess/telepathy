@@ -1,42 +1,17 @@
 # Topology for testcase 'gnp-windows-icmp-type-deny-bypass'.
-# Intent: prove an ICMP type/code match on a DENY rule is silently dropped on
-# Windows/HNS, opening a hole. The receiver (app=receiver) is the policy target,
-# pinned to a Windows node so its HNS ingress enforces the policy. The sender is
-# auto-pinned to a Linux node (ICMP needs busybox ping) — the Linux-sender ->
-# Windows-receiver path. Only runs under E2E_OS=windows.
-#
-# Self-contained telepathy Request. Run:
-#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+# One Linux ICMP sender (auto-pinned; it needs busybox ping) probes two receivers
+# with app==receiver, one per OS. Policy: Deny ICMP echo (type 8), then Allow ICMP.
+#   - receiver-lin (Linux): Deny bites -> ping denied (actual behaviour).
+#   - receiver-win (Windows): the icmp.type Deny is dropped -> ping allowed (DIFF).
+# sender->receiver-lin is Linux->Linux; sender->receiver-win is Linux->Windows
+# (ICMP works cross-OS, which the ICMP cases rely on). Only runs under E2E_OS=windows.
 namespaces:
   - name: winapp
-    labels:
-      purpose: policy-eval
-      kubernetes.io/metadata.name: winapp
+    labels: {purpose: policy-eval, kubernetes.io/metadata.name: winapp}
 endpoints:
-  # No nodeSelector: as the source of an ICMP flow this pod is auto-pinned to a
-  # Linux node so it has busybox ping.
-  - id: winapp/sender
-    namespace: winapp
-    name: sender
-    ip: 10.0.0.1
-    labels:
-      app: sender
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
-  # The receiver: pinned to a Windows node; its HNS ingress enforces the policy.
-  - id: winapp/receiver
-    namespace: winapp
-    name: receiver
-    ip: 10.0.0.2
-    labels:
-      app: receiver
-    nodeSelector:
-      kubernetes.io/os: windows
-    ports:
-      - name: http
-        port: 8080
-        protocol: tcp
+  # No nodeSelector: ICMP source is auto-pinned to a Linux node (busybox ping).
+  - {id: winapp/sender,       namespace: winapp, name: sender,       ip: 10.0.0.1, labels: {app: sender},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: winapp/receiver-lin, namespace: winapp, name: receiver-lin, ip: 10.0.0.4, labels: {app: receiver}, nodeSelector: {kubernetes.io/os: linux},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: winapp/receiver-win, namespace: winapp, name: receiver-win, ip: 10.0.0.2, labels: {app: receiver}, nodeSelector: {kubernetes.io/os: windows}, ports: [{name: http, port: 8080, protocol: tcp}]}
 port: 8080
 protocol: icmp
