@@ -188,38 +188,37 @@ HostEndpoint cases it requires `E2E_INCLUDE_HEP=1`.
 Policies can be exercised against the Calico **Windows/HNS** dataplane by joining
 a Windows node to the kind cluster and pinning the workload pods to it.
 
-### 1. Provision a Windows node
+### Run cases on a Windows node
 
-`kind` nodes are Linux containers; a Windows node has to be a real VM. The
-`calico-windows-up.sh` provisioner boots a **QEMU/libvirt Windows Server VM**,
-attaches it to the docker `kind` bridge (so it shares the node subnet — no
-cross-network routing), and joins it, fully unattended:
+`kind` nodes are Linux containers; a Windows node has to be a real VM.
+`E2E_OS=windows` makes `make e2e` boot one: after standing up kind+Calico it
+runs the `calico-windows-up.sh` provisioner, which boots a **QEMU/libvirt
+Windows Server VM**, attaches it to the docker `kind` bridge (so it shares the
+node subnet — no cross-network routing), and joins it, fully unattended:
 
 ```bash
-make e2e-windows \
+make e2e E2E_OS=windows \
   WINDOWS_ISO=/path/to/windows-server-2025.iso \
   WINDOWS_VERSION=2k25 \
-  WINDOWS_IMAGE_NAME="Windows Server 2025 SERVERDATACENTERCORE"
+  WINDOWS_IMAGE_NAME="Windows Server 2025 SERVERDATACENTERCORE" \
+  CASE=<case>
 ```
 
-It: reconfigures Calico for Windows (VXLAN, BGP off, `windowsDataplane: HNS`,
-strict IPAM affinity), fetches the virtio drivers (or reuses `VIRTIO_ISO_PATH`),
-renders an unattended-install answer file with a fresh `kubeadm` join token baked
-in, boots the VM, and waits for the node to go `Ready` with `calico-node-windows`
-running. Tear it down (leaving the kind cluster, keeping the ISOs) with
-`make e2e-windows-down`.
+The provisioner reconfigures Calico for Windows (VXLAN, BGP off,
+`windowsDataplane: HNS`, strict IPAM affinity), fetches the virtio drivers (or
+reuses `VIRTIO_ISO_PATH`), renders an unattended-install answer file with a
+fresh `kubeadm` join token baked in, boots the VM, and waits for the node to go
+`Ready` with `calico-node-windows` running. It runs *after* `calico-up.sh`, so
+it correctly leaves the cluster on the plain **`VXLAN`** encapsulation HNS
+requires (calico-up alone applies `VXLANCrossSubnet`, which HNS can't use on a
+single-subnet kind cluster). Tear it all down (Windows node + kind cluster,
+keeping the ISOs) with `make e2e-down`.
 
-Requirements beyond the base ones: **libvirt** (`virt-install`, `virsh`,
-`qemu-img`), **`genisoimage`**/`mkisofs`, and a **Windows Server ISO** (not
-auto-downloadable — Microsoft licensing; Server Core is preferred: headless,
-smaller). See the header of `hacks/provision/calico-windows-up.sh` for every
-env override.
-
-### 2. Run cases on it
-
-```bash
-E2E_OS=windows make e2e CASE=<case>
-```
+Windows requires `PROVIDER=calico`. Requirements beyond the base ones:
+**libvirt** (`virt-install`, `virsh`, `qemu-img`), **`genisoimage`**/`mkisofs`,
+and a **Windows Server ISO** (not auto-downloadable — Microsoft licensing;
+Server Core is preferred: headless, smaller). See the header of
+`hacks/provision/calico-windows-up.sh` for every env override.
 
 `E2E_OS=windows` stamps `kubernetes.io/os: windows` on every workload pod's
 `nodeSelector` (unless the endpoint declares its own), so pods land on the
@@ -238,12 +237,10 @@ Two things to know:
   whose base build matches the node (Server 2025 = `ltsc2025`) or the pods won't
   start. The Windows agnhost image has **no `ping`**, so ICMP assertions are
   **skipped** on Windows (L4 TCP/UDP/SCTP still run).
-- **Don't re-provision under it.** `make e2e` first runs `calico-up.sh`, which
-  re-applies `calico-resources.yaml` (`VXLANCrossSubnet`) — reverting the plain
-  **`VXLAN`** encapsulation Windows HNS requires (on a single-subnet kind cluster
-  CrossSubnet means *no* encapsulation, and HNS drops the unencapsulated pod
-  traffic). After `make e2e-windows`, run the tests against the existing cluster
-  directly instead:
+- **Re-running against an existing node.** `make e2e E2E_OS=windows` re-runs
+  both provisioners each time; the Windows one runs last so the cluster keeps
+  the plain **`VXLAN`** encapsulation HNS needs. To skip provisioning entirely
+  and just re-run cases against an already-joined node, drive `go test` directly:
 
   ```bash
   CLUSTER_NAME=telepathy-e2e-calico E2E_PROVIDER=calico E2E_OS=windows \

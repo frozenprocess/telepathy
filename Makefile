@@ -75,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-windows e2e-windows-down clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-down clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -290,27 +290,44 @@ E2E_OS      ?= linux
 #   make e2e                     # calico (default)
 #   make e2e PROVIDER=antrea
 #   make e2e PROVIDER=calico CASE=gnp-icmp-allow
+# E2E_OS=windows additionally joins a QEMU/libvirt Windows Server node running the
+# Calico HNS dataplane and runs every policy against it (calico only). Needs
+# libvirt (virt-install/virsh/qemu-img) + genisoimage and WINDOWS_ISO=...:
+#   make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso
+# Tear it all down (Windows node + kind cluster) with: make e2e-down
 e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's real connectivity against the engine
 	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
 	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
 	@test -x ./hacks/provision/$(PROVIDER)-up.sh || { echo "unknown PROVIDER=$(PROVIDER): no hacks/provision/$(PROVIDER)-up.sh"; exit 1; }
-	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/$(PROVIDER)-up.sh
+	@[ "$(E2E_OS)" != windows ] || [ "$(PROVIDER)" = calico ] || { echo "E2E_OS=windows requires PROVIDER=calico"; exit 1; }
+	@[ "$(E2E_OS)" != windows ] || command -v virt-install >/dev/null || { echo "E2E_OS=windows needs libvirt (virt-install) on PATH"; exit 1; }
+	@if kind get clusters 2>/dev/null | grep -qx "$(CLUSTER_NAME)-$(PROVIDER)"; then \
+		echo ">> kind cluster $(CLUSTER_NAME)-$(PROVIDER) exists — skipping provisioning (make e2e-down to recreate)"; \
+	else \
+		CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/$(PROVIDER)-up.sh; \
+	fi
 	@[ "$(PROVIDER)" = calico ] && { lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"; }; true
+	@if [ "$(E2E_OS)" = windows ]; then \
+		if kubectl --context kind-$(CLUSTER_NAME)-$(PROVIDER) get nodes -l kubernetes.io/os=windows -o name 2>/dev/null | grep -q .; then \
+			echo ">> Windows node already joined — skipping provisioning (make e2e-down to remove)"; \
+		else \
+			CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ./hacks/provision/calico-windows-up.sh; \
+		fi; \
+	fi
 	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) E2E_OS=$(E2E_OS) \
 		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
 
-# Join a QEMU/libvirt Windows Server node to the running kind+Calico cluster and
-# install the Calico HNS dataplane on it, fully unattended. Requires libvirt
-# (virt-install/virsh/qemu-img) + genisoimage, and a Windows Server ISO:
-#   make e2e-windows WINDOWS_ISO=/path/to/windows-server-2022.iso
-# Reconfigures Calico for Windows (VXLAN/HNS) — run `make e2e` first for the
-# Linux side. Tear the node down with: make e2e-windows-down
-e2e-windows:  ## Join a libvirt Windows node to kind+Calico (needs WINDOWS_ISO=...)
-	@command -v virt-install >/dev/null || { echo "e2e-windows needs libvirt (virt-install) on PATH"; exit 1; }
-	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-windows-up.sh
-
-e2e-windows-down:  ## Remove the libvirt Windows node (leaves the kind cluster)
-	@CLUSTER_NAME=$(CLUSTER_NAME)-calico ./hacks/provision/calico-windows-down.sh
+# Tear down everything e2e stood up: the Windows VM (if calico left one joined)
+# and the kind cluster. Match PROVIDER to whatever you ran `make e2e` with.
+# E2E_OS=windows removes only the Windows node, leaving the kind cluster up.
+e2e-down:  ## Remove the kind cluster and any joined Windows node (E2E_OS=windows: node only)
+	@[ "$(PROVIDER)" != calico ] || CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ./hacks/provision/calico-windows-down.sh
+	@if [ "$(E2E_OS)" = windows ]; then \
+		echo ">> Windows node removed; kind cluster left up (drop E2E_OS=windows to also delete it)"; \
+	else \
+		test -x ./hacks/provision/$(PROVIDER)-down.sh || { echo "unknown PROVIDER=$(PROVIDER): no hacks/provision/$(PROVIDER)-down.sh"; exit 1; }; \
+		CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ./hacks/provision/$(PROVIDER)-down.sh; \
+	fi
 
 # --- Cleanup ---------------------------------------------------------------
 clean:  ## Remove build artifacts

@@ -47,6 +47,7 @@ package calico
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -123,6 +124,7 @@ func RenderHNS(req Request, opts HNSOptions) HNSResponse {
 
 	g := buildGraph(req, nil)
 	resp.Warnings = g.warnings
+	resp.Warnings = append(resp.Warnings, lintWindowsHNS(g)...)
 	resp.Errors = append(inlineErrs, g.errors...)
 
 	for _, v := range opts.IPVersions {
@@ -170,6 +172,94 @@ func RenderHNS(req Request, opts HNSOptions) HNSResponse {
 		}
 	}
 	return resp
+}
+
+// lintWindowsHNS flags policy rules that Felix's Windows HNS renderer will
+// silently drop, changing the verdict versus Linux. It mirrors the exact
+// predicates in felix/dataplane/windows/policysets.protoRuleToHnsRules
+// (negative matches, ICMP type/code, named ports), plus the HostEndpoint gap:
+// RenderHNS renders workload endpoints only, and Windows Calico programs no
+// host-endpoint policy at all. See win_limitation.md. RenderHNS is the Windows
+// path by construction, so no per-endpoint OS check is needed.
+func lintWindowsHNS(g graphResult) []string {
+	var warnings []string
+	for id, pol := range g.store.PolicyByID {
+		for _, r := range append(append([]*proto.Rule{}, pol.GetInboundRules()...), pol.GetOutboundRules()...) {
+			if reason := windowsDropReason(r); reason != "" {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s %s: %s — Felix's Windows HNS renderer drops this rule, so its verdict "+
+						"diverges from Linux (see win_limitation.md)", id.Kind, id.Name, reason))
+			}
+		}
+	}
+	// tier-pass-block: an explicit Pass-action RULE in a default-tier policy.
+	// The default tier is the terminal tier for a workload endpoint (profiles
+	// are only appended when the default tier contributes no policies), so
+	// flattenTiers rewrites its trailing Pass to Block — on Linux the matched
+	// Pass falls through to the namespace profile (allow), on Windows it denies.
+	// A Pass in a non-default tier flattens into the next tier and is faithful.
+	seenPass := map[string]bool{}
+	for _, wep := range g.wepByID {
+		for _, t := range wep.GetTiers() {
+			if t.GetName() != "default" {
+				continue
+			}
+			for _, pid := range append(append([]*proto.PolicyID{}, t.GetIngressPolicies()...), t.GetEgressPolicies()...) {
+				tid := apptypes.ProtoToPolicyID(pid)
+				if model.KindIsStaged(tid.Kind) || seenPass[tid.Name] {
+					continue
+				}
+				if pol := g.store.PolicyByID[tid]; pol != nil && policyHasPassRule(pol) {
+					seenPass[tid.Name] = true
+					warnings = append(warnings, fmt.Sprintf(
+						"%s %s: Pass-action rule in the default (terminal) tier — Felix's Windows "+
+							"HNS renderer rewrites the trailing Pass to Block, so it denies where "+
+							"Linux falls through to the profile (see win_limitation.md)",
+						tid.Kind, tid.Name))
+				}
+			}
+		}
+	}
+	if len(g.hepByName) > 0 {
+		warnings = append(warnings,
+			"HostEndpoint policy (applyOnForward / doNotTrack / preDNAT) is not programmed on "+
+				"Windows; these rules have no effect there (see win_limitation.md)")
+	}
+	sort.Strings(warnings)
+	return warnings
+}
+
+// policyHasPassRule reports whether pol contains an explicit Pass-action rule.
+func policyHasPassRule(pol *proto.Policy) bool {
+	for _, r := range append(append([]*proto.Rule{}, pol.GetInboundRules()...), pol.GetOutboundRules()...) {
+		if strings.EqualFold(r.GetAction(), "pass") || strings.EqualFold(r.GetAction(), "next-tier") {
+			return true
+		}
+	}
+	return false
+}
+
+// windowsDropReason returns why the Windows HNS renderer would drop r, or "".
+func windowsDropReason(r *proto.Rule) string {
+	switch {
+	case len(r.GetNotSrcNet()) > 0 || len(r.GetNotDstNet()) > 0:
+		return "negated CIDR match (notNets)"
+	case len(r.GetNotSrcPorts()) > 0 || len(r.GetNotDstPorts()) > 0:
+		return "negated port match (notPorts)"
+	case len(r.GetNotSrcIpSetIds()) > 0 || len(r.GetNotDstIpSetIds()) > 0:
+		return "negated selector match (notSelector)"
+	case len(r.GetNotSrcNamedPortIpSetIds()) > 0 || len(r.GetNotDstNamedPortIpSetIds()) > 0:
+		return "negated named-port match"
+	case r.GetNotProtocol() != nil:
+		return "negated protocol match (notProtocol)"
+	case r.GetNotIcmp() != nil:
+		return "negated ICMP match (notICMP)"
+	case r.GetIcmp() != nil:
+		return "ICMP type/code match"
+	case len(r.GetSrcNamedPortIpSetIds()) > 0 || len(r.GetDstNamedPortIpSetIds()) > 0:
+		return "named-port match"
+	}
+	return ""
 }
 
 // registerEndpointPolicySets idempotently loads every policy/profile the
