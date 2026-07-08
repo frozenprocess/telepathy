@@ -75,7 +75,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-down clean distclean
+.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-help e2e-down clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -316,6 +316,28 @@ e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's r
 	fi
 	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) E2E_OS=$(E2E_OS) \
 		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
+
+e2e-help:  ## Show all e2e options (providers, vars, and examples)
+	@echo "telepathy e2e — run a real cluster and compare its connectivity against the engine"
+	@echo ""
+	@echo "Targets:"
+	@echo "  make e2e         stand up kind+PROVIDER and run every applicable e2e/testdata case"
+	@echo "  make e2e-down    tear down the kind cluster (and any joined Windows node)"
+	@echo "  make verify-all  run the same cases engine-only, no cluster (fast regression)"
+	@echo ""
+	@echo "Variables (VAR=value on the make line):"
+	@echo "  PROVIDER      CNI to test: any hacks/provision/<name>-up.sh   [default: $(PROVIDER)]  (calico|antrea)"
+	@echo "  CASE          run a single case by name (else all)            [default: all]"
+	@echo "  E2E_OS        pod OS: linux|windows (windows = calico only)   [default: $(E2E_OS)]"
+	@echo "  WINDOWS_ISO   path to Windows Server ISO (required E2E_OS=windows)"
+	@echo "  CLUSTER_NAME  kind cluster name (PROVIDER is suffixed)        [default: $(CLUSTER_NAME)]"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make e2e                                            # calico (default)"
+	@echo "  make e2e PROVIDER=antrea"
+	@echo "  make e2e PROVIDER=calico CASE=gnp-icmp-allow"
+	@echo "  make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso"
+	@echo "  make e2e-down PROVIDER=antrea"
 
 # Tear down everything e2e stood up: the Windows VM (if calico left one joined)
 # and the kind cluster. Match PROVIDER to whatever you ran `make e2e` with.

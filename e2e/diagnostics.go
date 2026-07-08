@@ -64,6 +64,10 @@ func collectDiagnostics(ctx context.Context, t *testing.T, c *cluster, in diagIn
 	}
 	write := func(fn, content string) {
 		p := filepath.Join(dir, fn)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Logf("artifacts: mkdir %s: %v", filepath.Dir(p), err)
+			return
+		}
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 			t.Logf("artifacts: write %s: %v", p, err)
 		}
@@ -97,9 +101,10 @@ func collectDiagnostics(ctx context.Context, t *testing.T, c *cluster, in diagIn
 	//    about: it shows what the dataplane actually did, vs. what the engine
 	//    predicted it would. Calico-specific (Felix + cali-* iptables chains).
 	if cfg.Provider == "calico" {
-		felix, rules := calicoDataplaneDump(ctx, c)
-		write("felix-logs.txt", felix)
-		write("dataplane-rules.txt", rules)
+		for _, nd := range calicoDataplaneDump(ctx, c) {
+			write(filepath.Join("felix-logs", sanitizeName(nd.name)+".txt"), nd.felix)
+			write(filepath.Join("dataplane-rules", sanitizeName(nd.name)+".txt"), nd.rules)
+		}
 	}
 
 	// Report the absolute path: `go test` runs in the e2e/ package dir, so a
@@ -164,17 +169,23 @@ func policyDump(ctx context.Context, c *cluster) string {
 
 // calicoDataplaneDump captures, per node, the two things that explain a DIFF on
 // a Calico cluster: Felix's recent logs (which policy it resolved and any
-// programming errors) and the programmed packet-filter ruleset (the cali-*
-// chains that actually allow/deny the probe). Felix logs come from the
-// calico-node pod on each node (operator install: calico-system DaemonSet); the
-// ruleset is read straight from the kind node's container, since the rendered
-// iptables/nft state isn't reachable through kubectl. Every step tolerates its
-// own error so one unreachable node doesn't sink the whole dump.
-func calicoDataplaneDump(ctx context.Context, c *cluster) (felix, rules string) {
+// programming errors) and the programmed dataplane ruleset (what actually
+// allows/denies the probe). Both are OS-specific:
+//
+//   - Linux: felix runs in the calico-node pod (calico-system DaemonSet); the
+//     ruleset is the cali-* iptables/nft chains, read from the kind node's
+//     container since the rendered state isn't reachable through kubectl.
+//   - Windows: felix runs in the calico-node-windows pod (container "node"); the
+//     ruleset is the HNS policy list, read via kubectl exec since the Windows
+//     node is a QEMU VM, not a docker container (dockerExec can't reach it).
+//
+// Every step tolerates its own error so one unreachable node doesn't sink the
+// whole dump. Results are per node: the caller writes one felix-logs/<node>.txt
+// and one dataplane-rules/<node>.txt per entry.
+func calicoDataplaneDump(ctx context.Context, c *cluster) []nodeDiag {
 	nodes, err := c.nodes(ctx)
 	if err != nil {
-		msg := fmt.Sprintf("(list nodes failed: %v)\n", err)
-		return msg, msg
+		return []nodeDiag{{name: "list-nodes-error", felix: fmt.Sprintf("(list nodes failed: %v)\n", err)}}
 	}
 	// Stable, deterministic node order (cleanups shouldn't depend on map order).
 	names := make([]string, 0, len(nodes))
@@ -183,71 +194,136 @@ func calicoDataplaneDump(ctx context.Context, c *cluster) (felix, rules string) 
 	}
 	sort.Strings(names)
 
-	// felixTail is generous on purpose: calico-node is extremely chatty, and the
-	// policy-programming lines that explain a DIFF are easily pushed past a small
-	// tail by routine per-node churn (route/typha/BGP logs).
-	const felixTail = "3000"
+	// windowsNodes error is non-fatal: an all-Linux cluster returns an empty set,
+	// and a lookup failure just means we treat every node as Linux (the common case).
+	win, _ := c.windowsNodes(ctx)
 
-	var fb, rb strings.Builder
+	out := make([]nodeDiag, 0, len(names))
 	for _, node := range names {
-		// Felix logs: find the calico-node pod scheduled on this node, tail it.
-		fmt.Fprintf(&fb, "=== felix @ %s ===\n", node)
-		pod, perr := c.kubectl(ctx, nil, "get", "pods", "-n", "calico-system",
-			"-l", "k8s-app=calico-node", "--field-selector", "spec.nodeName="+node,
-			"-o", "jsonpath={.items[0].metadata.name}")
-		pod = strings.TrimSpace(pod)
-		if perr != nil || pod == "" {
-			fmt.Fprintf(&fb, "(no calico-node pod found: err=%v out=%q)\n\n", perr, pod)
+		var fb, rb strings.Builder
+		if win[node] {
+			windowsNodeDump(ctx, c, node, &fb, &rb)
 		} else {
-			logs, lerr := c.kubectl(ctx, nil, "logs", "-n", "calico-system", pod,
-				"-c", "calico-node", "--tail="+felixTail)
-			if lerr != nil {
-				fmt.Fprintf(&fb, "(logs %s failed: %v)\n", pod, lerr)
-			}
-			fb.WriteString(logs)
-			if !strings.HasSuffix(logs, "\n") {
-				fb.WriteByte('\n')
-			}
-			// If calico-node restarted (it crash-loops when e.g. typha is briefly
-			// unreachable), the *current* instance's logs are just the fresh boot
-			// sequence — the felix activity from when the policy was programmed is
-			// in the prior instance. Grab --previous too; kubectl errors with an
-			// empty body when there's no prior instance, so we only append a real
-			// one.
-			prev, pverr := c.kubectl(ctx, nil, "logs", "-n", "calico-system", pod,
-				"-c", "calico-node", "--previous", "--tail="+felixTail)
-			if pverr == nil && strings.TrimSpace(prev) != "" {
-				fmt.Fprintf(&fb, "--- previous (pre-restart) instance @ %s ---\n", node)
-				fb.WriteString(prev)
-				if !strings.HasSuffix(prev, "\n") {
-					fb.WriteByte('\n')
-				}
-			}
-			fb.WriteByte('\n')
+			linuxNodeDump(ctx, c, node, &fb, &rb)
 		}
+		out = append(out, nodeDiag{name: node, felix: fb.String(), rules: rb.String()})
+	}
+	return out
+}
 
-		// Ruleset: read from the kind node container. Calico may use the iptables
-		// or the nft backend depending on version/config, so try both families
-		// and keep whatever the node answers — a failed variant is just noise.
-		for _, argv := range [][]string{
-			{"iptables-save"},
-			{"ip6tables-save"},
-			{"nft", "list", "ruleset"},
-		} {
-			out, derr := c.dockerExec(ctx, node, argv...)
-			if derr != nil && strings.TrimSpace(out) == "" {
-				continue // backend not present on this node; skip silently
-			}
-			fmt.Fprintf(&rb, "=== %s @ %s ===\n", strings.Join(argv, " "), node)
-			if derr != nil {
-				fmt.Fprintf(&rb, "(exit: %v)\n", derr)
-			}
-			rb.WriteString(out)
-			if !strings.HasSuffix(out, "\n") {
-				rb.WriteByte('\n')
-			}
-			rb.WriteByte('\n')
+// nodeDiag is one node's dataplane post-mortem: its felix logs and its
+// programmed ruleset, each destined for its own file.
+type nodeDiag struct {
+	name  string
+	felix string
+	rules string
+}
+
+// felixTail is generous on purpose: calico-node is extremely chatty, and the
+// policy-programming lines that explain a DIFF are easily pushed past a small
+// tail by routine per-node churn (route/typha/BGP logs).
+const felixTail = "3000"
+
+// linuxNodeDump appends one Linux node's felix logs and cali-* ruleset.
+func linuxNodeDump(ctx context.Context, c *cluster, node string, fb, rb *strings.Builder) {
+	fmt.Fprintf(fb, "=== felix @ %s ===\n", node)
+	pod := nodeCalicoPod(ctx, c, "k8s-app=calico-node", node)
+	if pod == "" {
+		fmt.Fprintf(fb, "(no calico-node pod found on %s)\n\n", node)
+	} else {
+		appendPodLogs(ctx, c, fb, pod, "calico-node", node)
+	}
+
+	// Ruleset: read from the kind node container. Calico may use the iptables
+	// or the nft backend depending on version/config, so try both families
+	// and keep whatever the node answers — a failed variant is just noise.
+	for _, argv := range [][]string{
+		{"iptables-save"},
+		{"ip6tables-save"},
+		{"nft", "list", "ruleset"},
+	} {
+		out, derr := c.dockerExec(ctx, node, argv...)
+		if derr != nil && strings.TrimSpace(out) == "" {
+			continue // backend not present on this node; skip silently
+		}
+		appendRuleset(rb, strings.Join(argv, " "), node, out, derr)
+	}
+}
+
+// windowsNodeDump appends one Windows node's felix logs (calico-node-windows,
+// container "node") and its HNS dataplane state. The ruleset is read through
+// kubectl exec into the HostProcess pod — the Windows node is a QEMU VM, so
+// dockerExec (which targets kind's docker containers) can't reach it. Get-HnsPolicyList
+// is the direct analogue of what the hns.go renderer produces (the ACL policysets
+// a DIFF disagrees about); hnsdiag is the fallback when the HNS module isn't loaded.
+func windowsNodeDump(ctx context.Context, c *cluster, node string, fb, rb *strings.Builder) {
+	fmt.Fprintf(fb, "=== felix @ %s (windows) ===\n", node)
+	pod := nodeCalicoPod(ctx, c, "k8s-app=calico-node-windows", node)
+	if pod == "" {
+		fmt.Fprintf(fb, "(no calico-node-windows pod found on %s)\n\n", node)
+		return
+	}
+	appendPodLogs(ctx, c, fb, pod, "node", node)
+
+	for _, argv := range [][]string{
+		{"powershell", "-NoProfile", "-NonInteractive", "-Command", "Get-HnsPolicyList | ConvertTo-Json -Depth 20"},
+		{"hnsdiag", "list", "all"},
+	} {
+		out, derr := c.exec(ctx, "calico-system", pod, "node", argv...)
+		if derr != nil && strings.TrimSpace(out) == "" {
+			continue // cmdlet/tool not present; skip silently
+		}
+		appendRuleset(rb, strings.Join(argv, " "), node, out, derr)
+	}
+}
+
+// nodeCalicoPod returns the name of the calico-node[-windows] pod scheduled on
+// node (empty if none / lookup failed — the caller reports the gap).
+func nodeCalicoPod(ctx context.Context, c *cluster, selector, node string) string {
+	pod, _ := c.kubectl(ctx, nil, "get", "pods", "-n", "calico-system",
+		"-l", selector, "--field-selector", "spec.nodeName="+node,
+		"-o", "jsonpath={.items[0].metadata.name}")
+	return strings.TrimSpace(pod)
+}
+
+// appendPodLogs tails a container's logs into b, plus the previous instance's
+// logs if the pod restarted. If calico-node restarted (it crash-loops when e.g.
+// typha is briefly unreachable), the *current* instance's logs are just the
+// fresh boot sequence — the felix activity from when the policy was programmed
+// is in the prior instance. kubectl --previous errors with an empty body when
+// there's no prior instance, so we only append a real one.
+func appendPodLogs(ctx context.Context, c *cluster, b *strings.Builder, pod, container, node string) {
+	logs, lerr := c.kubectl(ctx, nil, "logs", "-n", "calico-system", pod,
+		"-c", container, "--tail="+felixTail)
+	if lerr != nil {
+		fmt.Fprintf(b, "(logs %s failed: %v)\n", pod, lerr)
+	}
+	b.WriteString(logs)
+	if !strings.HasSuffix(logs, "\n") {
+		b.WriteByte('\n')
+	}
+	prev, pverr := c.kubectl(ctx, nil, "logs", "-n", "calico-system", pod,
+		"-c", container, "--previous", "--tail="+felixTail)
+	if pverr == nil && strings.TrimSpace(prev) != "" {
+		fmt.Fprintf(b, "--- previous (pre-restart) instance @ %s ---\n", node)
+		b.WriteString(prev)
+		if !strings.HasSuffix(prev, "\n") {
+			b.WriteByte('\n')
 		}
 	}
-	return fb.String(), rb.String()
+	b.WriteByte('\n')
+}
+
+// appendRuleset writes one dataplane-ruleset section (title @ node, exit note,
+// body with a trailing blank line).
+func appendRuleset(b *strings.Builder, title, node, out string, derr error) {
+	fmt.Fprintf(b, "=== %s @ %s ===\n", title, node)
+	if derr != nil {
+		fmt.Fprintf(b, "(exit: %v)\n", derr)
+	}
+	b.WriteString(out)
+	if !strings.HasSuffix(out, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
 }

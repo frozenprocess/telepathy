@@ -68,4 +68,4 @@ runs:
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_DIFF: ${{ inputs.fail-on-diff }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-      run: bash "$GITHUB_ACTION_PATH/scripts/telepathy-ci.sh"
+      run: bash "$GITHUB_ACTION_PATH/hacks/telepathy-ci.sh"

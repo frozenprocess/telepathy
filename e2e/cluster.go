@@ -254,6 +254,23 @@ func (c *cluster) controlPlaneNodes(ctx context.Context) (map[string]bool, error
 	return set, nil
 }
 
+// windowsNodes returns the set of Windows node names (kubernetes.io/os=windows).
+// Used by the diagnostics dump to pick the right calico-node DaemonSet and the
+// HNS-vs-iptables dataplane reader per node.
+func (c *cluster) windowsNodes(ctx context.Context) (map[string]bool, error) {
+	out, err := c.kubectl(ctx, nil, "get", "nodes",
+		"-l", "kubernetes.io/os=windows",
+		"-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		return nil, cmdErr("list windows nodes", out, err)
+	}
+	set := map[string]bool{}
+	for _, n := range strings.Fields(out) {
+		set[n] = true
+	}
+	return set, nil
+}
+
 // nodeInternalIP returns a node's InternalIP — the address a HostEndpoint
 // "host/<name>" row/col is probed at.
 func (c *cluster) nodeInternalIP(ctx context.Context, node string) (string, error) {
