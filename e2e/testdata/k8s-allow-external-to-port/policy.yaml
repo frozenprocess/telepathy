@@ -1,0 +1,17 @@
+# Recipe 8: ALLOW traffic from external clients (port-scoped variant).
+# The recipe's use case is exposing web via a LoadBalancer: allow inbound from
+# anywhere (no `from`) but restrict it to the served port. This models the
+# "restrict to a port" form the recipe documents -- any source may reach 8080,
+# but 5000 is denied. (Recipe port 80 -> 8080 to avoid privileged ports.)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: web-allow-external
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+  - ports:
+    - port: 8080

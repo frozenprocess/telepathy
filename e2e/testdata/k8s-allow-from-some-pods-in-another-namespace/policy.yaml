@@ -1,0 +1,22 @@
+# Recipe 7: ALLOW traffic from some pods in another namespace.
+# The namespaceSelector and podSelector are in the SAME `from` element (no `-`
+# before podSelector), so they AND together: the source must be in a namespace
+# labelled team=operations AND carry type=monitoring. Right namespace + wrong
+# pod, or right pod + wrong namespace, are both denied.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: web-allow-all-ns-monitoring
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            team: operations
+        podSelector:
+          matchLabels:
+            type: monitoring

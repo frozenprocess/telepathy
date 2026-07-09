@@ -1,0 +1,32 @@
+namespaces:
+  - name: default
+    labels: { kubernetes.io/metadata.name: default }
+  - name: ops
+    labels: { kubernetes.io/metadata.name: ops, team: operations }
+endpoints:
+  - id: default/web
+    namespace: default
+    name: web
+    ip: 10.0.0.1
+    labels: { app: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/monitoring
+    namespace: default
+    name: monitoring
+    ip: 10.0.0.2
+    labels: { type: monitoring }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: ops/monitoring
+    namespace: ops
+    name: monitoring
+    ip: 10.0.1.1
+    labels: { type: monitoring }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: ops/web
+    namespace: ops
+    name: web
+    ip: 10.0.1.2
+    labels: { type: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+port: 8080
+protocol: tcp

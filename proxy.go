@@ -33,8 +33,11 @@ import (
 // module so their CNI's dependency versions never have to reconcile with the
 // shell's (Calico's). They speak the vendor-neutral JSON contract: an
 // api.Request on stdin, an api.Response on stdout; `-capabilities` prints the
-// capability list. The Antrea provider is registered this way.
-func init() { provider.Register(externalProvider{name: "antrea", binary: "telepathy-engine-antrea"}) }
+// capability list. The Antrea and Cilium providers are registered this way.
+func init() {
+	provider.Register(externalProvider{name: "antrea", binary: "telepathy-engine-antrea"})
+	provider.Register(externalProvider{name: "cilium", binary: "telepathy-engine-cilium"})
+}
 
 // externalProvider is a provider.Provider backed by an external engine binary.
 type externalProvider struct {

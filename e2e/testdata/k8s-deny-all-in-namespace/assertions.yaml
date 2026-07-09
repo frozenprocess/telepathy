@@ -1,0 +1,13 @@
+assertions:
+  - name: same-namespace ingress denied
+    from: default/client
+    to: default/web
+    expect: deny
+  - name: cross-namespace ingress denied
+    from: secondary/client
+    to: default/web
+    expect: deny
+  - name: egress out of the namespace is unaffected (Ingress-only policy)
+    from: default/web
+    to: secondary/client
+    expect: allow

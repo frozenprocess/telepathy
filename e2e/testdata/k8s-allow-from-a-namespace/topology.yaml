@@ -1,0 +1,34 @@
+namespaces:
+  - name: default
+    labels: { kubernetes.io/metadata.name: default }
+  - name: prod
+    labels: { kubernetes.io/metadata.name: prod, purpose: production }
+  - name: dev
+    labels: { kubernetes.io/metadata.name: dev, purpose: testing }
+endpoints:
+  - id: default/web
+    namespace: default
+    name: web
+    ip: 10.0.0.1
+    labels: { app: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/client
+    namespace: default
+    name: client
+    ip: 10.0.0.2
+    labels: { app: client }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: prod/client
+    namespace: prod
+    name: client
+    ip: 10.0.1.1
+    labels: { app: client }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: dev/client
+    namespace: dev
+    name: client
+    ip: 10.0.2.1
+    labels: { app: client }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+port: 8080
+protocol: tcp

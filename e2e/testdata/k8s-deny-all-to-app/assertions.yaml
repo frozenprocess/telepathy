@@ -1,0 +1,9 @@
+assertions:
+  - name: client cannot reach web (ingress default-deny)
+    from: default/client
+    to: default/web
+    expect: deny
+  - name: web has no egress policy, may reach client
+    from: default/web
+    to: default/client
+    expect: allow

@@ -5,6 +5,8 @@
 # Per-engine workspaces (one isolated module graph per CNI binary).
 /engines/antrea/go.work
 /engines/antrea/go.work.sum
+/engines/cilium/go.work
+/engines/cilium/go.work.sum
 
 # Build artifacts.
 /bin/
@@ -14,3 +16,4 @@
 /.telepathy-base/
 
 /e2e/logs/
+/engines/cilium/cilium

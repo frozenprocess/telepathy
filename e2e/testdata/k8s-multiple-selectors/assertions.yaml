@@ -1,0 +1,17 @@
+assertions:
+  - name: search may reach db
+    from: default/search
+    to: default/db
+    expect: allow
+  - name: api may reach db
+    from: default/api
+    to: default/db
+    expect: allow
+  - name: inventory/web may reach db
+    from: default/inventory
+    to: default/db
+    expect: allow
+  - name: unlisted app denied
+    from: default/other
+    to: default/db
+    expect: deny

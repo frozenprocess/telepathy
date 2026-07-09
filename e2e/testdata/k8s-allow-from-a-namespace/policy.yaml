@@ -1,0 +1,18 @@
+# Recipe 6: ALLOW traffic to an application from a specific namespace.
+# The namespaceSelector matches only namespaces labelled purpose=production, so
+# web accepts ingress from pods in the prod namespace and nowhere else -- not
+# even from pods in its own (default) namespace, which lacks that label.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: web-allow-prod
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          purpose: production

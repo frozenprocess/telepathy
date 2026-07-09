@@ -1,0 +1,16 @@
+assertions:
+  - name: monitoring may reach the metrics port
+    from: default/monitoring
+    to: default/apiserver
+    expect: allow
+    port: 5000
+  - name: monitoring is denied on other ports
+    from: default/monitoring
+    to: default/apiserver
+    expect: deny
+    port: 8080
+  - name: non-monitoring source denied even on the metrics port
+    from: default/client
+    to: default/apiserver
+    expect: deny
+    port: 5000

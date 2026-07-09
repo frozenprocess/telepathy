@@ -1,0 +1,36 @@
+namespaces:
+  - name: default
+    labels: { kubernetes.io/metadata.name: default }
+endpoints:
+  - id: default/db
+    namespace: default
+    name: db
+    ip: 10.0.0.1
+    labels: { app: bookstore, role: db }
+    ports: [ { name: redis, port: 8080, protocol: tcp } ]
+  - id: default/search
+    namespace: default
+    name: search
+    ip: 10.0.0.2
+    labels: { app: bookstore, role: search }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/api
+    namespace: default
+    name: api
+    ip: 10.0.0.3
+    labels: { app: bookstore, role: api }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/inventory
+    namespace: default
+    name: inventory
+    ip: 10.0.0.4
+    labels: { app: inventory, role: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/other
+    namespace: default
+    name: other
+    ip: 10.0.0.5
+    labels: { app: other }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+port: 8080
+protocol: tcp

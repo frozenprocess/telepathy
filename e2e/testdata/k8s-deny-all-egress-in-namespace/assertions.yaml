@@ -1,0 +1,13 @@
+assertions:
+  - name: intra-namespace egress denied
+    from: default/client
+    to: default/web
+    expect: deny
+  - name: egress leaving the namespace denied
+    from: default/web
+    to: secondary/client
+    expect: deny
+  - name: ingress from another namespace still allowed
+    from: secondary/client
+    to: default/web
+    expect: allow

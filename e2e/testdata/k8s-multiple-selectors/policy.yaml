@@ -1,0 +1,28 @@
+# Recipe 10: ALLOW traffic from apps using multiple selectors.
+# Selects the db pods and lists three podSelectors as separate `from` elements,
+# which OR together: any pod matching search, api, OR inventory/web may connect.
+# Anything else is denied.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: redis-allow-services
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: bookstore
+      role: db
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: bookstore
+          role: search
+    - podSelector:
+        matchLabels:
+          app: bookstore
+          role: api
+    - podSelector:
+        matchLabels:
+          app: inventory
+          role: web

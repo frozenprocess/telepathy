@@ -1,0 +1,14 @@
+# Recipe 12: DENY all non-whitelisted egress in a namespace.
+# Empty podSelector selects every pod; policyTypes: [Egress] with an empty
+# egress list denies all outbound traffic for the whole namespace. Ingress is
+# untouched, so pods in other namespaces can still reach in.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: default-deny-all-egress
+  namespace: default
+spec:
+  policyTypes:
+  - Egress
+  podSelector: {}
+  egress: []
