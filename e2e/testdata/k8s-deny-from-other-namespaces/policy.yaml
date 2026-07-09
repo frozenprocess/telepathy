@@ -1,0 +1,15 @@
+# Recipe 4: DENY traffic from other namespaces.
+# podSelector: {} selects every pod in the namespace; the rule allows ingress
+# only from `podSelector: {}` (any pod in the SAME namespace, since a bare
+# podSelector never crosses namespaces). Result: same-namespace allowed,
+# every other namespace denied.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  namespace: default
+  name: deny-from-other-namespaces
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - podSelector: {}

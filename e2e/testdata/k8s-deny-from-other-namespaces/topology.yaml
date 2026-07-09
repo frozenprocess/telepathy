@@ -1,0 +1,26 @@
+namespaces:
+  - name: default
+    labels: { kubernetes.io/metadata.name: default }
+  - name: secondary
+    labels: { kubernetes.io/metadata.name: secondary }
+endpoints:
+  - id: default/web
+    namespace: default
+    name: web
+    ip: 10.0.0.1
+    labels: { app: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/client
+    namespace: default
+    name: client
+    ip: 10.0.0.2
+    labels: { app: client }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: secondary/client
+    namespace: secondary
+    name: client
+    ip: 10.0.1.1
+    labels: { app: client }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+port: 8080
+protocol: tcp

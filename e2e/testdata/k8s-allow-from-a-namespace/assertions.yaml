@@ -1,0 +1,13 @@
+assertions:
+  - name: production namespace allowed
+    from: prod/client
+    to: default/web
+    expect: allow
+  - name: testing namespace denied
+    from: dev/client
+    to: default/web
+    expect: deny
+  - name: policy's own namespace denied (lacks purpose=production)
+    from: default/client
+    to: default/web
+    expect: deny

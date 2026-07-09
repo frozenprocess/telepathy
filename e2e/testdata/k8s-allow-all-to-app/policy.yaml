@@ -1,0 +1,16 @@
+# Recipe 2a: ALLOW all traffic to an application.
+# The empty ingress rule (- {}) whitelists every source. Its purpose is to
+# override a namespace-wide default-deny for a specific app; standalone it is
+# equivalent to having no ingress policy. Included here so engines are exercised
+# on the explicit allow-all rule form.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: web-allow-all
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+  - {}

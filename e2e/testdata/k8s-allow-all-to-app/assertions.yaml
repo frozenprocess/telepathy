@@ -1,0 +1,9 @@
+assertions:
+  - name: any source may reach web
+    from: default/client
+    to: default/web
+    expect: allow
+  - name: any other source may also reach web
+    from: default/other
+    to: default/web
+    expect: allow

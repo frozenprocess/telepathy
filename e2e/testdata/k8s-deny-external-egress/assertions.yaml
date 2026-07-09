@@ -1,0 +1,12 @@
+assertions:
+  - name: DNS egress to kube-dns is allowed
+    from: default/foo
+    to: dns-system/coredns
+    expect: allow
+    protocol: udp
+    port: 53
+  - name: all other egress is denied
+    from: default/foo
+    to: default/web
+    expect: deny
+    port: 8080

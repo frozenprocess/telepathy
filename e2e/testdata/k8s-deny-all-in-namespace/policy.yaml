@@ -1,0 +1,12 @@
+# Recipe 3: DENY all non-whitelisted ingress in a namespace.
+# An empty podSelector selects EVERY pod in the namespace; the empty ingress
+# list then denies all inbound traffic to all of them. This is the baseline
+# default-deny other policies build allow-carveouts on top of.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: default-deny-all
+  namespace: default
+spec:
+  podSelector: {}
+  ingress: []

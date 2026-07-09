@@ -1,0 +1,16 @@
+# Recipe 11: DENY egress traffic from an application.
+# policyTypes: [Egress] with an empty egress list denies ALL outbound traffic
+# from app=foo pods. Ingress to foo is unaffected. (Real workloads also need a
+# DNS carve-out -- see recipe 14.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: foo-deny-egress
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: foo
+  policyTypes:
+  - Egress
+  egress: []

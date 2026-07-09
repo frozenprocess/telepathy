@@ -147,9 +147,9 @@ func verifyCase(t *testing.T, name, dir string) {
 		t.Skipf("flavor %q not applicable to %s provider", flavor, provider)
 	}
 	policyText := string(readFile(t, filepath.Join(dir, "policy.yaml")))
-	if provider == "antrea" {
-		if kind := unsupportedAntreaKind(policyText); kind != "" {
-			t.Skipf("antrea engine does not evaluate %s — skipping (would misreport)", kind)
+	if k8sOnlyProvider(provider) {
+		if kind := unsupportedK8sOnlyKind(policyText); kind != "" {
+			t.Skipf("%s engine does not evaluate %s — skipping (would misreport)", provider, kind)
 		}
 	}
 
@@ -206,15 +206,16 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	assertBytes := readFile(t, filepath.Join(dir, "assertions.yaml"))
 	policyText := string(readFile(t, filepath.Join(dir, "policy.yaml")))
 
-	// The Antrea engine only predicts upstream Kubernetes NetworkPolicy; it does
-	// not yet evaluate the NPA admin tier (ClusterNetworkPolicy / Admin- /
-	// BaselineAdminNetworkPolicy). A k8s-flavored case that leans on those kinds
-	// would have the dataplane enforce them while the engine ignores them — a
-	// false DIFF, not a real disagreement. Skip such cases under -provider antrea
-	// (they light up automatically once the engine grows that support).
-	if provider == "antrea" {
-		if kind := unsupportedAntreaKind(policyText); kind != "" {
-			t.Skipf("antrea engine does not evaluate %s — skipping (would misreport)", kind)
+	// The Antrea and Cilium engines only predict upstream Kubernetes
+	// NetworkPolicy; they do not yet evaluate the NPA admin tier
+	// (ClusterNetworkPolicy / Admin- / BaselineAdminNetworkPolicy) or vendor
+	// CRDs. A k8s-flavored case that leans on those kinds would have the
+	// dataplane enforce them while the engine ignores them — a false DIFF, not a
+	// real disagreement. Skip such cases for those providers (they light up
+	// automatically once the engine grows that support).
+	if k8sOnlyProvider(provider) {
+		if kind := unsupportedK8sOnlyKind(policyText); kind != "" {
+			t.Skipf("%s engine does not evaluate %s — skipping (would misreport)", provider, kind)
 		}
 	}
 
@@ -1161,11 +1162,21 @@ func readMetaInt(t *testing.T, path, key string) (int, bool) {
 	return 0, false
 }
 
-// unsupportedAntreaKind returns the first policy kind in policyText that the
-// Antrea engine does not evaluate (the NPA admin tier), or "" when every kind is
-// supported. It is a deliberately shallow scan of `kind:` lines — enough to gate
-// e2e case applicability without parsing the documents.
-func unsupportedAntreaKind(policyText string) string {
+// k8sOnlyProvider reports whether an engine only predicts upstream Kubernetes
+// NetworkPolicy (no Calico/Antrea/Cilium CRDs, no NPA admin tier). Both the
+// Antrea and Cilium engines are in this class today, so k8s-flavored cases that
+// lean on CRD kinds must be skipped for them (see unsupportedK8sOnlyKind).
+func k8sOnlyProvider(provider string) bool {
+	return provider == "antrea" || provider == "cilium"
+}
+
+// unsupportedK8sOnlyKind returns the first policy kind a k8s-NetworkPolicy-only
+// engine (Antrea, Cilium) cannot evaluate, or "" if the manifest is plain k8s
+// NetworkPolicy. Such a case would have the dataplane enforce the kind while the
+// engine ignores it — a false DIFF, not a real disagreement. It is a
+// deliberately shallow scan of `kind:` lines — enough to gate e2e case
+// applicability without parsing the documents.
+func unsupportedK8sOnlyKind(policyText string) string {
 	unsupported := []string{"ClusterNetworkPolicy", "AdminNetworkPolicy", "BaselineAdminNetworkPolicy"}
 	for _, line := range strings.Split(policyText, "\n") {
 		line = strings.TrimSpace(line)

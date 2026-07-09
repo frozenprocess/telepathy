@@ -1,0 +1,26 @@
+namespaces:
+  - name: default
+    labels: { kubernetes.io/metadata.name: default }
+  - name: dns-system
+    labels: { kubernetes.io/metadata.name: dns-system }
+endpoints:
+  - id: default/foo
+    namespace: default
+    name: foo
+    ip: 10.0.0.1
+    labels: { app: foo }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: default/web
+    namespace: default
+    name: web
+    ip: 10.0.0.2
+    labels: { app: web }
+    ports: [ { name: http, port: 8080, protocol: tcp } ]
+  - id: dns-system/coredns
+    namespace: dns-system
+    name: coredns
+    ip: 10.0.1.10
+    labels: { k8s-app: kube-dns }
+    ports: [ { name: dns, port: 53, protocol: udp } ]
+port: 8080
+protocol: tcp

@@ -1,0 +1,9 @@
+assertions:
+  - name: same-namespace source allowed
+    from: default/client
+    to: default/web
+    expect: allow
+  - name: other-namespace source allowed
+    from: secondary/client
+    to: default/web
+    expect: allow

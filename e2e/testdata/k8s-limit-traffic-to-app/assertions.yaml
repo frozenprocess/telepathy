@@ -1,0 +1,9 @@
+assertions:
+  - name: a bookstore pod may reach the api
+    from: default/bookstore-web
+    to: default/api
+    expect: allow
+  - name: a non-bookstore pod is denied
+    from: default/other
+    to: default/api
+    expect: deny

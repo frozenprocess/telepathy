@@ -1,0 +1,11 @@
+assertions:
+  - name: any source may reach the exposed port
+    from: default/client
+    to: default/web
+    expect: allow
+    port: 8080
+  - name: other ports stay denied
+    from: default/client
+    to: default/web
+    expect: deny
+    port: 5000

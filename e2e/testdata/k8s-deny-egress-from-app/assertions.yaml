@@ -1,0 +1,9 @@
+assertions:
+  - name: foo's egress is denied
+    from: default/foo
+    to: default/web
+    expect: deny
+  - name: ingress to foo is unaffected (Egress-only policy)
+    from: default/web
+    to: default/foo
+    expect: allow

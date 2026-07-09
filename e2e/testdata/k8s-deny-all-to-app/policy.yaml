@@ -1,0 +1,14 @@
+# Recipe 1: DENY all traffic to an application.
+# podSelector picks app=web; policyTypes defaults to [Ingress] because an
+# `ingress` field is present, and an empty ingress list means "no source is
+# allowed" -> every inbound connection to web is denied. Egress is untouched.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: web-deny-all
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress: []

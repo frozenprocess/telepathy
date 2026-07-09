@@ -1,0 +1,16 @@
+# Recipe 5: ALLOW traffic to an application from all namespaces.
+# An empty namespaceSelector matches every namespace, so web accepts ingress
+# from any pod cluster-wide. Contrast recipe 4, where a bare podSelector limits
+# sources to the same namespace only.
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  namespace: default
+  name: web-allow-all-namespaces
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  ingress:
+  - from:
+    - namespaceSelector: {}

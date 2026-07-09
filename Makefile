@@ -7,7 +7,7 @@
 #
 #   make build      # clone Calico (if needed), create go.work, build the binary
 #   make test       # build, then feed a sample Request in and print the raw output
-#   make fetch      # vendor source trees (CNI=all|calico|antrea, comma-list ok)
+#   make fetch      # vendor source trees (CNI=all|calico|antrea|cilium, comma-list ok)
 #   make clean      # remove build artifacts
 #   make distclean  # also remove the Calico checkout and go.work
 
@@ -25,12 +25,26 @@ ANTREA_REPO    ?= https://github.com/antrea-io/antrea.git
 ANTREA_VERSION ?= v2.6.1
 ANTREA_DIR     ?= third_party/antrea
 
+# Cilium source tree — the third CNI provider. Built as its OWN binary
+# (engines/cilium) over this tree, in a separate module/workspace, same as
+# Antrea: Cilium's dependency graph (eBPF, envoy, its own controller-runtime)
+# never has to reconcile with Calico's.
+CILIUM_REPO    ?= https://github.com/cilium/cilium.git
+CILIUM_VERSION ?= v1.19.5
+CILIUM_DIR     ?= third_party/cilium
+
 # The shell binary (Calico in-process + the api contract).
 BIN            ?= bin/telepathy
 # The out-of-process Antrea engine binary, placed next to BIN so the shell finds
 # it automatically (see proxy.go locate()).
 ANTREA_BIN     ?= bin/telepathy-engine-antrea
 ANTREA_MOD     ?= engines/antrea
+
+# The out-of-process Cilium engine binary, placed next to BIN so the shell finds
+# it automatically (see proxy.go locate()). Built over Cilium's tree in its own
+# workspace, same as the Antrea engine.
+CILIUM_BIN     ?= bin/telepathy-engine-cilium
+CILIUM_MOD     ?= engines/cilium
 
 # Docker build environment. GO_VERSION tracks .go-version so the container
 # toolchain matches what the repo pins; override either var to retarget.
@@ -75,7 +89,7 @@ LDFLAGS        := -X main.engineVersion=$(ENGINE_VERSION) \
 # and avoids needing libbpf C headers on the build host.
 export CGO_ENABLED=0
 
-.PHONY: help all build build-shell build-antrea build-docker image test fetch e2e e2e-help e2e-down clean distclean
+.PHONY: help all build build-shell build-antrea build-cilium build-docker image test fetch e2e e2e-help e2e-down clean distclean
 
 # Running `make` with no target prints the help below.
 .DEFAULT_GOAL := help
@@ -115,6 +129,12 @@ $(ANTREA_DIR):
 	@echo ">> cloning $(ANTREA_REPO) @ $(ANTREA_VERSION) into $(ANTREA_DIR)"
 	git clone --depth 1 --branch $(ANTREA_VERSION) $(ANTREA_REPO) $(ANTREA_DIR)
 
+# --- Cilium source ---------------------------------------------------------
+# Shallow clone of the pinned Cilium tag, vendored the same way as Calico/Antrea.
+$(CILIUM_DIR):
+	@echo ">> cloning $(CILIUM_REPO) @ $(CILIUM_VERSION) into $(CILIUM_DIR)"
+	git clone --depth 1 --branch $(CILIUM_VERSION) $(CILIUM_REPO) $(CILIUM_DIR)
+
 # --- Fetch -----------------------------------------------------------------
 # Single entry point for vendoring source trees. Pick which with CNI (a
 # case-insensitive comma list, or "all"); override tags with CALICO_VERSION /
@@ -125,14 +145,15 @@ $(ANTREA_DIR):
 #   make fetch CNI=Calico,antrea
 CNI ?= all
 
-fetch:  ## Fetch source trees: CNI=all|calico|antrea (comma-list ok); tags via CALICO_VERSION/ANTREA_VERSION
+fetch:  ## Fetch source trees: CNI=all|calico|antrea|cilium (comma-list ok); tags via *_VERSION
 	@cni="$$(echo '$(CNI)' | tr 'A-Z,' 'a-z ')"; \
-	[ "$$cni" = "all" ] && cni="calico antrea"; \
+	[ "$$cni" = "all" ] && cni="calico antrea cilium"; \
 	for c in $$cni; do \
 	  case "$$c" in \
 	    calico) $(MAKE) --no-print-directory $(CALICO_DIR) ;; \
 	    antrea) $(MAKE) --no-print-directory $(ANTREA_DIR) ;; \
-	    *) echo ">> unknown CNI '$$c' (want: all, calico, antrea)" >&2; exit 1 ;; \
+	    cilium) $(MAKE) --no-print-directory $(CILIUM_DIR) ;; \
+	    *) echo ">> unknown CNI '$$c' (want: all, calico, antrea, cilium)" >&2; exit 1 ;; \
 	  esac; \
 	done
 
@@ -156,8 +177,21 @@ $(ANTREA_MOD)/go.work: $(ANTREA_DIR)
 	rm -f $@
 	cd $(ANTREA_MOD) && GOWORK="$(CURDIR)/$(ANTREA_MOD)/go.work" go work init . ../../api ../../$(ANTREA_DIR)
 
+# Cilium engine: its module + the api contract + Cilium's tree, with Cilium's
+# native dependency versions. The genproto replace disambiguates the old
+# monolithic google.golang.org/genproto (pulled transitively by grpc/etcd) from
+# the split googleapis/{rpc,api} submodules Cilium uses — without it the build
+# fails with "ambiguous import". Pin to a post-split genproto that no longer
+# carries those subpackages.
+$(CILIUM_MOD)/go.work: $(CILIUM_DIR)
+	@echo ">> initialising cilium engine workspace ($(CILIUM_MOD) + ./api + $(CILIUM_DIR))"
+	rm -f $@
+	cd $(CILIUM_MOD) && GOWORK="$(CURDIR)/$(CILIUM_MOD)/go.work" go work init . ../../api ../../$(CILIUM_DIR)
+	cd $(CILIUM_MOD) && GOWORK="$(CURDIR)/$(CILIUM_MOD)/go.work" go work edit \
+		-replace google.golang.org/genproto=google.golang.org/genproto@v0.0.0-20231016165738-49dd2c1f3d0b
+
 # --- Build -----------------------------------------------------------------
-build: build-shell build-antrea  ## Clone sources, create workspaces, build both binaries
+build: build-shell build-antrea build-cilium  ## Clone sources, create workspaces, build all engine binaries
 
 build-shell: $(CALICO_DIR) go.work  ## Build the shell binary (Calico in-process)
 	@mkdir -p $(dir $(BIN))
@@ -170,6 +204,12 @@ build-antrea: $(ANTREA_DIR) $(ANTREA_MOD)/go.work  ## Build the out-of-process A
 	@echo ">> building $(ANTREA_BIN)"
 	cd $(ANTREA_MOD) && go build -o $(CURDIR)/$(ANTREA_BIN) .
 	@echo ">> built $(ANTREA_BIN)"
+
+build-cilium: $(CILIUM_DIR) $(CILIUM_MOD)/go.work  ## Build the out-of-process Cilium engine binary
+	@mkdir -p $(dir $(CILIUM_BIN))
+	@echo ">> building $(CILIUM_BIN)"
+	cd $(CILIUM_MOD) && go build -o $(CURDIR)/$(CILIUM_BIN) .
+	@echo ">> built $(CILIUM_BIN)"
 
 # --- Docker build ----------------------------------------------------------
 # Build inside a pinned golang container instead of with the host toolchain,
@@ -304,7 +344,7 @@ e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's r
 	@if kind get clusters 2>/dev/null | grep -qx "$(CLUSTER_NAME)-$(PROVIDER)"; then \
 		echo ">> kind cluster $(CLUSTER_NAME)-$(PROVIDER) exists — skipping provisioning (make e2e-down to recreate)"; \
 	else \
-		CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) ./hacks/provision/$(PROVIDER)-up.sh; \
+		CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) ANTREA_VERSION=$(ANTREA_VERSION) CILIUM_VERSION=$(CILIUM_VERSION) ./hacks/provision/$(PROVIDER)-up.sh; \
 	fi
 	@[ "$(PROVIDER)" = calico ] && { lsmod 2>/dev/null | grep -q '^sctp' || echo ">> note: sctp kernel module not loaded; SCTP cases may fail (try: sudo modprobe sctp)"; }; true
 	@if [ "$(E2E_OS)" = windows ]; then \
@@ -326,7 +366,7 @@ e2e-help:  ## Show all e2e options (providers, vars, and examples)
 	@echo "  make verify-all  run the same cases engine-only, no cluster (fast regression)"
 	@echo ""
 	@echo "Variables (VAR=value on the make line):"
-	@echo "  PROVIDER      CNI to test: any hacks/provision/<name>-up.sh   [default: $(PROVIDER)]  (calico|antrea)"
+	@echo "  PROVIDER      CNI to test: any hacks/provision/<name>-up.sh   [default: $(PROVIDER)]  (calico|antrea|cilium)"
 	@echo "  CASE          run a single case by name (else all)            [default: all]"
 	@echo "  E2E_OS        pod OS: linux|windows (windows = calico only)   [default: $(E2E_OS)]"
 	@echo "  WINDOWS_ISO   path to Windows Server ISO (required E2E_OS=windows)"
@@ -335,6 +375,7 @@ e2e-help:  ## Show all e2e options (providers, vars, and examples)
 	@echo "Examples:"
 	@echo "  make e2e                                            # calico (default)"
 	@echo "  make e2e PROVIDER=antrea"
+	@echo "  make e2e PROVIDER=cilium"
 	@echo "  make e2e PROVIDER=calico CASE=gnp-icmp-allow"
 	@echo "  make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso"
 	@echo "  make e2e-down PROVIDER=antrea"
@@ -356,4 +397,4 @@ clean:  ## Remove build artifacts
 	rm -rf bin
 
 distclean: clean  ## Also remove the Calico + Antrea checkouts and generated workspaces
-	rm -rf $(CALICO_DIR) $(ANTREA_DIR) go.work go.work.sum $(ANTREA_MOD)/go.work $(ANTREA_MOD)/go.work.sum
+	rm -rf $(CALICO_DIR) $(ANTREA_DIR) $(CILIUM_DIR) go.work go.work.sum $(ANTREA_MOD)/go.work $(ANTREA_MOD)/go.work.sum $(CILIUM_MOD)/go.work $(CILIUM_MOD)/go.work.sum

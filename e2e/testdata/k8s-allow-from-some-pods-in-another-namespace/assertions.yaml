@@ -1,0 +1,13 @@
+assertions:
+  - name: ops namespace + monitoring pod allowed
+    from: ops/monitoring
+    to: default/web
+    expect: allow
+  - name: ops namespace but non-monitoring pod denied
+    from: ops/web
+    to: default/web
+    expect: deny
+  - name: monitoring pod but wrong namespace denied
+    from: default/monitoring
+    to: default/web
+    expect: deny
