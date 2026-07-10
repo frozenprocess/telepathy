@@ -1,0 +1,28 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. Proves the tier-flattening divergence with a VALID config, and
+# includes a LINUX-hosted server as an in-case control that shows the actual
+# (intended) behaviour side by side. Skip (don't fail) unless the run is Windows.
+#
+# HNS has no tiers, so Felix flattens them (flattener.go). A `Pass` in the LAST
+# tier is rewritten to Block (flattener.go:42-47), and profiles are only appended
+# as a fallback when the default tier has no policy for the endpoint (hns.go
+# renderHNSEndpoint). One default-tier GNP (defaultAction stays the required Deny)
+# carries an explicit `action: Pass` rule for app=client, and selects two servers:
+#   - server-lin (Linux): Pass -> namespace profile -> ALLOW (engine == cluster).
+#   - server-win (Windows): trailing Pass -> Block, no profile -> DENY (DIFF).
+# The trigger is a Pass RULE, not the tier's defaultAction (the `default` tier's
+# action is immutably Deny — admission rejects Pass there; that earlier, invalid
+# approach was removed). A Pass rule inside a Deny-default-tier policy is
+# admissible and reproduces the divergence.
+#
+# Assertions encode the LINUX verdict (== engine prediction), so engine-only
+# `verify-all` passes. On a Windows cluster client->server-win is denied while the
+# engine says allow -> DIFF; client->server-lin stays allow -> ok, demonstrating
+# the real behaviour the Windows dataplane departs from.
+requiresOS: windows
+
+# Validate the rendered Calico dataplane cost weight against the live
+# node (Calico + Linux only; see e2e/cost.go).
+cost: true

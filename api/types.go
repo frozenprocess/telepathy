@@ -246,6 +246,16 @@ type Request struct {
 	// a feature this engine doesn't honour) into hard errors. Default:
 	// warnings surface in Response.Warnings, evaluation still runs.
 	StrictLint bool `json:"strictLint,omitempty"`
+
+	// Cost opts in to the policy-efficiency cost (Response.Cost). The
+	// portable layer is engine-independent (see ComputeCost); an engine may
+	// additionally fill Cost.Dataplane with its real compiled weight.
+	Cost bool `json:"cost,omitempty"`
+
+	// CostDataplane selects which dataplane an engine weighs for
+	// Cost.Dataplane. Calico honours "iptables" (default) and "bpf"; other
+	// values / engines fall back to their default or omit Dataplane.
+	CostDataplane string `json:"costDataplane,omitempty"`
 }
 
 // Response is the connectivity matrix. Keys are "src.ID->dst.ID"; values are
@@ -257,6 +267,9 @@ type Response struct {
 	Matrix   map[string]string `json:"matrix"`
 	Errors   []string          `json:"errors,omitempty"`
 	Warnings []string          `json:"warnings,omitempty"`
+	// Cost is the policy-efficiency report, present only when Request.Cost
+	// is set. See CostReport.
+	Cost *CostReport `json:"cost,omitempty"`
 	// Actors is the typed row/col directory for Matrix: one entry per matrix
 	// endpoint, in the same order the rows/cols appear. It's the single source
 	// of endpoint typing — consumers read Kind here instead of re-deriving

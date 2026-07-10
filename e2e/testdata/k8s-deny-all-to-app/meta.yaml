@@ -1,3 +1,7 @@
 # Upstream Kubernetes NetworkPolicy recipe (networking.k8s.io/v1), so every
 # engine evaluates it.
 flavor: k8s
+
+# Validate the rendered Calico dataplane cost weight against the live
+# node (Calico + Linux only; see e2e/cost.go).
+cost: true

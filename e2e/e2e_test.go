@@ -86,6 +86,10 @@ func runCases(t *testing.T, label string, run func(t *testing.T, name, dir strin
 			continue // not a case directory
 		}
 		name := e.Name()
+		// This filters cases via flavor, so the engine doesn't log skipping.
+		if flavor := readFlavor(t, filepath.Join(dir, "meta.yaml")); flavor != "k8s" && flavor != cfg.Provider {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			t.Cleanup(func() {
 				switch {
@@ -142,10 +146,8 @@ func checkProvider(t *testing.T) {
 // prediction against the case's authored `expect` instead of probing a cluster.
 func verifyCase(t *testing.T, name, dir string) {
 	provider := cfg.Provider
-	flavor := readFlavor(t, filepath.Join(dir, "meta.yaml"))
-	if flavor != "k8s" && flavor != provider {
-		t.Skipf("flavor %q not applicable to %s provider", flavor, provider)
-	}
+	// Flavor applicability is gated at enumeration (see runCases), so a case that
+	// reaches here already applies to this provider.
 	policyText := string(readFile(t, filepath.Join(dir, "policy.yaml")))
 	if k8sOnlyProvider(provider) {
 		if kind := unsupportedK8sOnlyKind(policyText); kind != "" {
@@ -183,10 +185,8 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	ctx := context.Background()
 
 	provider := cfg.Provider
-	flavor := readFlavor(t, filepath.Join(dir, "meta.yaml"))
-	if flavor != "k8s" && flavor != provider {
-		t.Skipf("flavor %q not applicable to %s provider", flavor, provider)
-	}
+	// Flavor applicability is gated at enumeration (see runCases); a case that
+	// reaches here already applies to this provider.
 	// requiresOS gates a case on the run's E2E_OS: a case whose topology pins a pod
 	// to a Windows node can't schedule on a Linux-only cluster, so skip (don't fail)
 	// unless the run targets that OS. Engine-only verify (NoCluster) is OS-agnostic
@@ -201,6 +201,12 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	// north-south cases (preDNAT/NodePort) where the policy is exercised by
 	// traffic entering a node from outside. See doc.go / README.
 	externalProbe := readMetaFlag(t, filepath.Join(dir, "meta.yaml"), "externalProbe")
+	// costCheck validates the policy rules telepathy renders for this case against
+	// the rules the cluster actually programs (opt-in per case via `cost: true` in
+	// meta.yaml). Calico only; the dataplane read is OS-specific (iptables on
+	// linux, HNS on windows). See validateCost.
+	costCheck := cfg.Provider == "calico" && (cfg.OS == "linux" || cfg.OS == "windows") &&
+		readMetaFlag(t, filepath.Join(dir, "meta.yaml"), "cost")
 
 	topoBytes := readFile(t, filepath.Join(dir, "topology.yaml"))
 	assertBytes := readFile(t, filepath.Join(dir, "assertions.yaml"))
@@ -653,6 +659,42 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		})
 	})
 
+	// Pods in a protected namespace (e.g. default) survive the namespace-delete
+	// pre-clean — the harness never deletes those namespaces — so a leftover from
+	// a prior run whose spec has since changed makes `apply` try to patch a pod's
+	// immutable fields (command/ports) and fail. Non-protected namespaces were
+	// already wiped wholesale above, so only protected ones can still hold a
+	// colliding pod. Delete this case's own pods there by name first, so apply
+	// creates them fresh — the same clean slate every other namespace gets.
+	for _, ep := range req.Endpoints {
+		if externalEP[ep.ID] || !protectedNamespace(ep.Namespace) {
+			continue
+		}
+		if name := podNameByID[ep.ID]; name != "" {
+			if out, err := c.kubectl(ctx, nil, "delete", "pod", "-n", ep.Namespace, name,
+				"--ignore-not-found", "--wait=true", "--timeout=120s"); err != nil {
+				t.Fatalf("pre-apply delete stale pod %s/%s: %v\n%s", ep.Namespace, name, err, out)
+			}
+		}
+	}
+
+	// Cost baseline: the policy-rule count BEFORE this case's policy lands, so the
+	// post-convergence delta isolates exactly this case's policy rules (cases run
+	// sequentially and tear down cleanly, so nothing else moves it). If the
+	// dataplane isn't readable (wrong backend / no Windows node) skip rather than
+	// miscount. See e2e/cost.go.
+	var costBaseline policyRuleCounts
+	if costCheck {
+		var berr error
+		if costBaseline, berr = c.policyRuleCounts(ctx); berr != nil {
+			t.Fatalf("cost baseline: %v", berr)
+		}
+		if !costBaseline.linuxPresent && !costBaseline.nftPresent && !costBaseline.hnsPresent && !costBaseline.bpfPresent {
+			t.Logf("cost: no readable dataplane (wrong backend / no node) — skipping cost validation")
+			costCheck = false
+		}
+	}
+
 	if out, err := c.apply(ctx, baseManifest); err != nil {
 		t.Fatalf("apply base resources: %v\n%s", err, out)
 	}
@@ -666,6 +708,21 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	if len(referencedHosts) > 0 {
 		if out, err := c.waitPodsReady(ctx, hostNS, 2*time.Minute); err != nil {
 			t.Fatalf("wait host pods ready: %v\n%s", err, out)
+		}
+	}
+	// Pods (re)created in a protected namespace aren't covered by the createdNS
+	// wait above (the harness doesn't own those namespaces, so they aren't in the
+	// set). Wait for them by name — not `pod --all`, which would also block on any
+	// unrelated pod living in that shared namespace — before harvesting their IPs.
+	for _, ep := range req.Endpoints {
+		if externalEP[ep.ID] || !protectedNamespace(ep.Namespace) {
+			continue
+		}
+		if name := podNameByID[ep.ID]; name != "" {
+			if out, err := c.kubectl(ctx, nil, "wait", "-n", ep.Namespace,
+				"--for=condition=Ready", "pod", name, "--timeout=120s"); err != nil {
+				t.Fatalf("wait pod ready %s/%s: %v\n%s", ep.Namespace, name, err, out)
+			}
 		}
 	}
 
@@ -926,6 +983,13 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	t.Log("\n" + rep.render())
 	if n := rep.mismatches(); n > 0 {
 		t.Errorf("%d/%d assertions: engine disagrees with the cluster (or probe errored)", n, len(assertions))
+	}
+
+	// Cost validation runs last, after Felix has converged (post-settle,
+	// post-probe): does the offline-rendered dataplane weight match what Calico
+	// actually programmed for this case?
+	if costCheck {
+		validateCost(ctx, t, c, costBaseline, rewrittenTopo, rewrittenPolicyFile, osByID)
 	}
 }
 

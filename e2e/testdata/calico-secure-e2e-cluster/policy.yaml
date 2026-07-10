@@ -1,0 +1,162 @@
+# Progressive hardening of the e2e cluster's control plane, adapted from
+# frozenprocess/Tigera-Presentations '04.best-practices-for-securing-a-Kubernetes-
+# environment' and CORRECTED where telepathy shows the original would not enforce.
+#
+# Read top-to-bottom as the story: (1) default-deny every pod, then re-open only
+# (2) DNS, (3) calico-apiserver -> kube-apiserver, (4) calico components ->
+# calico-apiserver. The assertions prove each intended flow survives and nothing
+# else does.
+#
+# Lower `order` wins. Kubernetes NetworkPolicies get an implicit order of 1000,
+# so the Calico default-deny is placed at 2000 (evaluated after any KNP) and the
+# per-flow allows at 1000 (evaluated first).
+
+# ---------------------------------------------------------------------------
+# (1) Default-deny for every namespaced workload.
+# namespaceSelector has(projectcalico.org/name) matches every pod in every
+# namespace (Calico stamps projectcalico.org/name on each namespace). No rules +
+# both types = deny all ingress and egress. HostEndpoints are NOT namespaced, so
+# this does not touch the kube-apiserver HEP — that is governed by (3b) below.
+# ---------------------------------------------------------------------------
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: deny-app-policy
+spec:
+  order: 2000
+  namespaceSelector: has(projectcalico.org/name)
+  types:
+    - Ingress
+    - Egress
+---
+# ---------------------------------------------------------------------------
+# (2a) Permit DNS egress: every pod may reach kube-dns on 53.
+# The presentation stops here. Telepathy shows that is not enough — the
+# default-deny above ALSO denies coredns's INGRESS, so the query never lands.
+# (2b) supplies the missing ingress leg.
+# ---------------------------------------------------------------------------
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: permit-dns-egress
+spec:
+  order: 1000
+  namespaceSelector: has(projectcalico.org/name)
+  egress:
+    - action: Allow
+      protocol: UDP
+      destination:
+        selector: telepathy.tigera.io/app == "kube-dns"
+        ports: [53]
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: telepathy.tigera.io/app == "kube-dns"
+        ports: [53]
+---
+# (2b) The ingress leg telepathy revealed was missing: let coredns accept the
+# queries the default-deny would otherwise drop.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: permit-dns-ingress
+  namespace: kube-system
+spec:
+  order: 1000
+  selector: telepathy.tigera.io/app == "kube-dns"
+  ingress:
+    - action: Allow
+      protocol: UDP
+      destination:
+        ports: [53]
+    - action: Allow
+      protocol: TCP
+      destination:
+        ports: [53]
+---
+# ---------------------------------------------------------------------------
+# (3a) calico-apiserver -> kube-apiserver on 6443.  *** CORRECTED ***
+# The presentation targets `selector: has(kubernetes.io/os)` +
+# `namespaceSelector: global()`. That matches nothing: kubernetes.io/os is a
+# NODE label (not present on pods), and the kube-apiserver is host-networked, so
+# it is a HostEndpoint, not a WorkloadEndpoint a pod selector could hit. Egress
+# destination selectors only match workload endpoints. The working form targets
+# the control-plane node by IP.
+# ---------------------------------------------------------------------------
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: calico-apiserver-to-kapi
+  namespace: calico-apiserver
+spec:
+  order: 1000
+  selector: telepathy.tigera.io/app == "calico-apiserver"
+  egress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        nets:
+          - 172.18.0.5/32
+        ports: [6443]
+---
+# (3b) The kube-apiserver HEP default-denies once any policy selects it, so the
+# ingress leg of (3a) must be allowed on the host side too — from the calico
+# components only (source has(telepathy.tigera.io/app)), never from application pods.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: kube-apiserver-host-ingress
+spec:
+  order: 1000
+  selector: has(node-role.kubernetes.io/control-plane)
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: has(telepathy.tigera.io/app)
+      destination:
+        ports: [6443]
+---
+# ---------------------------------------------------------------------------
+# (4a) calico components -> calico-apiserver on 5443 (egress leg).  *** GNP ***
+# This MUST be a GlobalNetworkPolicy, not a namespaced one. calico-kube-
+# controllers/typha live in calico-system but calico-apiserver lives in the
+# calico-apiserver namespace; in a namespaced NetworkPolicy a bare rule selector
+# is scoped to the policy's OWN namespace, so a calico-system policy selecting
+# `telepathy.tigera.io/app == "calico-apiserver"` matches nothing. A GNP's selectors are
+# cluster-wide, so it reaches across namespaces. (Telepathy denies the
+# namespaced form — try it and watch this flow break.)
+# ---------------------------------------------------------------------------
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: calico-components-to-apiserver
+spec:
+  order: 1000
+  selector: telepathy.tigera.io/app in {"calico-node", "calico-typha", "calico-kube-controllers"}
+  egress:
+    - action: Allow
+      protocol: TCP
+      destination:
+        selector: telepathy.tigera.io/app == "calico-apiserver"
+        ports: [5443]
+---
+# (4b) calico-apiserver accepts 5443 from any calico component (ingress leg).
+# Also a GNP: the components dialling in live in calico-system, a different
+# namespace, so a namespaced policy's source selector (namespace-scoped) would
+# miss them — the same cross-namespace trap as (4a). source has(telepathy.tigera.io/app) keeps
+# application pods (labelled app=*, not telepathy.tigera.io/app) out.
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: calico-apiserver-ingress
+spec:
+  order: 1000
+  selector: telepathy.tigera.io/app == "calico-apiserver"
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source:
+        selector: has(telepathy.tigera.io/app)
+      destination:
+        ports: [5443]

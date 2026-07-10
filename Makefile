@@ -272,6 +272,14 @@ test: build  ## Build, then feed a sample Request in and print the raw output
 	@echo ">> ----- raw engine output -----"
 	@$(BIN) bpf -json -policy $(TEST_POLICY) < $(TEST_INPUT)
 	@echo ">> ------------------------------"
+	@$(BIN) cost -dataplane iptables -json -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@echo ">> ------------------------------"
+	@$(BIN) cost -dataplane bpf -json -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@echo ">> ------------------------------"
+	@$(BIN) cost -dataplane nftables -json -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@echo ">> ------------------------------"
+	@$(BIN) cost -dataplane hns -json -policy $(TEST_POLICY) < $(TEST_INPUT)
+	@echo ">> ------------------------------"
 
 # PROVIDER selects the CNI engine the assertion gates evaluate with (telepathy
 # -provider): `calico` (in-process, default) or `antrea` (the out-of-process
@@ -315,7 +323,10 @@ diff-demo: build  ## Evaluate base vs PR policy on the same topology and print t
 # Simulation is great but the actual measure should be a side by side evaluation.
 # This is where these e2e tests come in: they run a real cluster with real CNIs,
 # and compare the engine's predicted connectivity against the real connectivity
-# observed in the cluster. 
+# observed in the cluster.
+# A case can also validate the rendered Calico dataplane COST weight against the
+# rules the live node actually programs — opt in with `cost: true` in the case's
+# meta.yaml (Calico + Linux only; see e2e/cost.go).
 # Testcases can be found in e2e/testdata/ folder
 CLUSTER_NAME ?= telepathy-e2e
 PROVIDER    ?= calico
@@ -335,7 +346,7 @@ E2E_OS      ?= linux
 # libvirt (virt-install/virsh/qemu-img) + genisoimage and WINDOWS_ISO=...:
 #   make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso
 # Tear it all down (Windows node + kind cluster) with: make e2e-down
-e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's real connectivity against the engine
+e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's real connectivity (and, for cost-opted Calico/Linux cases, the rendered dataplane cost) against the engine
 	@command -v kubectl >/dev/null || { echo "e2e needs kubectl on PATH"; exit 1; }
 	@command -v kind >/dev/null || { echo "e2e needs kind on PATH"; exit 1; }
 	@test -x ./hacks/provision/$(PROVIDER)-up.sh || { echo "unknown PROVIDER=$(PROVIDER): no hacks/provision/$(PROVIDER)-up.sh"; exit 1; }
@@ -370,6 +381,8 @@ e2e-help:  ## Show all e2e options (providers, vars, and examples)
 	@echo "  CASE          run a single case by name (else all)            [default: all]"
 	@echo "  E2E_OS        pod OS: linux|windows (windows = calico only)   [default: $(E2E_OS)]"
 	@echo "  WINDOWS_ISO   path to Windows Server ISO (required E2E_OS=windows)"
+	@echo "  VIRTIO_ISO_PATH path to virtio-win ISO (required E2E_OS=windows)"
+	@echo "  WINDOWS_IMAGE_NAME  name of the Windows image to use (required E2E_OS=windows)   [default: $(WINDOWS_IMAGE_NAME)]"
 	@echo "  CLUSTER_NAME  kind cluster name (PROVIDER is suffixed)        [default: $(CLUSTER_NAME)]"
 	@echo ""
 	@echo "Examples:"
@@ -377,7 +390,7 @@ e2e-help:  ## Show all e2e options (providers, vars, and examples)
 	@echo "  make e2e PROVIDER=antrea"
 	@echo "  make e2e PROVIDER=cilium"
 	@echo "  make e2e PROVIDER=calico CASE=gnp-icmp-allow"
-	@echo "  make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso"
+	@echo "  make e2e E2E_OS=windows WINDOWS_ISO=/path/to/windows-server-2022.iso VIRTIO_ISO_PATH=/path/to/virtio-win.iso WINDOWS_IMAGE_NAME=MyWindowsImage"
 	@echo "  make e2e-down PROVIDER=antrea"
 
 # Tear down everything e2e stood up: the Windows VM (if calico left one joined)

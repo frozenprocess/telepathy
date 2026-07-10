@@ -1,6 +1,0 @@
-# Policy dialect, decided by apiVersion.
-#   k8s    - upstream Kubernetes networking API (networking.k8s.io);
-#            evaluated by every engine.
-#   calico - projectcalico.org CRDs; evaluated only by the calico engine.
-# `make verify-all PROVIDER=<x>` runs a case when flavor==k8s or flavor==<x>.
-flavor: calico

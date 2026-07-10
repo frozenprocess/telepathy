@@ -124,7 +124,7 @@ type Config struct {
 	// ProbeConcurrency caps how many of a case's per-assertion probes run at once.
 	// Probes are independent and dominated by waiting (a deny flow exhausts 4 ×
 	// agnhost --timeout=2s before it concludes), so an all-deny case like
-	// gnp-selector-has (30 flows) spends ~5min probing serially — enough to trip the
+	// calico-gnp-selector-has (30 flows) spends ~5min probing serially — enough to trip the
 	// suite-wide `go test -timeout`. Fanning them out collapses that to ~1/N. Only
 	// the plain workload-pod path parallelizes; HEP and external-observer cases stay
 	// serial (their conntrack-flush / NodePort routing assumes one flow at a time).

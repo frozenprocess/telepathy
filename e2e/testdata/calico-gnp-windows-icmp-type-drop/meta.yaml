@@ -1,0 +1,28 @@
+# Policy dialect, decided by apiVersion (see gnp-icmp-allow for the full note).
+flavor: calico
+
+# Windows-only. Exposes an UNDOCUMENTED Windows/HNS divergence, so it only makes
+# sense against a Windows dataplane. Skip (don't fail) unless the run is Windows.
+#
+# What it proves: Felix's Windows renderer silently drops any rule that carries an
+# ICMP type/code match (policysets.go: pRule.Icmp != nil -> ErrNotSupported). A
+# bare `protocol: ICMP` rule is fine (see gnp-icmp-allow-windows); adding
+# `icmp.type` makes the whole rule vanish, so the ICMP the rule meant to allow is
+# denied on Windows while Linux allows it. The docs don't mention this.
+#
+# How it proves it: assertions encode the LINUX verdict (== engine prediction), so
+# engine-only `verify-all` passes. On a Windows cluster the receiver refuses the
+# ping while the engine still says allow -> DIFF (engine != cluster). The Linux
+# sender is auto-pinned to a Linux node (it needs busybox ping); the receiver's
+# Windows HNS ingress is the dataplane under test.
+requiresOS: windows
+#
+# This case now mirrors the target on both OSes and probes each allow-flow SAME-OS:
+# the -lin (Linux) row shows the ACTUAL/intended behaviour (engine == cluster, ok),
+# beside the -win (Windows) row that DIFFs. Allow-flows must be same-OS because
+# Windows<->Linux pod TCP is unreliable in the test cluster and would otherwise look
+# like a policy deny.
+
+# Validate the rendered Calico dataplane cost weight against the live
+# node (Calico + Linux only; see e2e/cost.go).
+cost: true

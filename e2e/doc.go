@@ -27,7 +27,7 @@
 // Run it via `make e2e` (which brings the cluster up first) or directly:
 //
 //	go test -tags e2e -timeout 60m ./e2e/... -v
-//	go test -tags e2e ./e2e/... -run 'TestE2E/np-deny-all-ingress' -v
+//	go test -tags e2e ./e2e/... -run 'TestE2E/calico-np-deny-all-ingress' -v
 //
 // How a case runs (see e2e_test.go for the orchestration):
 //

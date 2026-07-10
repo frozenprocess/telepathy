@@ -88,13 +88,14 @@ type BPFOptions struct {
 // BPF instruction (the `--asm` view). SubPrograms is >1 when polprog had to
 // split the program across trampoline boundaries (large policies).
 type BPFProgram struct {
-	Endpoint    string   `json:"endpoint"`
-	Interface   string   `json:"interface"`
-	Direction   string   `json:"direction"`
-	IPVersion   int      `json:"ipVersion"`
-	SubPrograms int      `json:"subPrograms"`
-	Lines       []string `json:"lines"`
-	Error       string   `json:"error,omitempty"`
+	Endpoint     string   `json:"endpoint"`
+	Interface    string   `json:"interface"`
+	Direction    string   `json:"direction"`
+	IPVersion    int      `json:"ipVersion"`
+	SubPrograms  int      `json:"subPrograms"`
+	Instructions int      `json:"instructions,omitempty"` // total eBPF instructions across sub-programs
+	Lines        []string `json:"lines"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // BPFResponse is the rendered programs plus feed-time warnings/errors.
@@ -139,12 +140,13 @@ func RenderBPF(req Request, opts BPFOptions) BPFResponse {
 					Direction: dir,
 					IPVersion: ipv,
 				}
-				lines, n, err := renderBPFProgram(rls, ipv, opts.Verbose, g.ipSetMembers)
+				lines, subs, insns, err := renderBPFProgram(rls, ipv, opts.Verbose, g.ipSetMembers)
 				if err != nil {
 					prog.Error = err.Error()
 				}
 				prog.Lines = lines
-				prog.SubPrograms = n
+				prog.SubPrograms = subs
+				prog.Instructions = insns
 				resp.Programs = append(resp.Programs, prog)
 			}
 		}
@@ -251,10 +253,10 @@ func (p allocOnLookup) GetNoAlloc(id string) uint64 {
 // the concise tier→policy→rule tree. polprog uses logrus.Panic for some error
 // paths, so we recover and report per program rather than crashing the whole
 // render.
-func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[string][]string) (lines []string, n int, err error) {
+func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[string][]string) (lines []string, subPrograms, insns int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			lines, n, err = nil, 0, fmt.Errorf("polprog panic: %v", r)
+			lines, subPrograms, insns, err = nil, 0, 0, fmt.Errorf("polprog panic: %v", r)
 		}
 	}()
 
@@ -271,11 +273,14 @@ func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[stri
 	b := polprog.NewBuilder(prov, 1, 2, 3, 4, opts...)
 	progs, err := b.Instructions(rls)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
+	}
+	for _, p := range progs {
+		insns += len(p)
 	}
 
 	if verbose {
-		return renderBPFVerbose(progs), len(progs), nil
+		return renderBPFVerbose(progs), len(progs), insns, nil
 	}
 	// Map the synthetic IP-set IDs polprog folded into the Match lines back to
 	// the members the calc graph captured. A live node reads these from a kernel
@@ -287,7 +292,7 @@ func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[stri
 			membersByID[id] = m
 		}
 	}
-	return renderBPFConcise(progs, membersByID), len(progs), nil
+	return renderBPFConcise(progs, membersByID), len(progs), insns, nil
 }
 
 // renderBPFVerbose emits the full annotated disassembly: jump labels,

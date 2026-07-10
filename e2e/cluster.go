@@ -83,19 +83,24 @@ func (c *cluster) deleteManifest(ctx context.Context, manifest string) (string, 
 	return c.kubectl(ctx, []byte(manifest), "delete", "--ignore-not-found", "--wait=false", "-f", "-")
 }
 
-// deleteOrphanClusterPolicies removes cluster-scoped policy objects left over
-// from a previous run that didn't tear down. Unlike namespaced resources, these
-// survive namespace deletion, so a leftover GlobalNetworkPolicy (e.g. a
-// default-tier deny-all from another case) keeps applying to every case that
-// runs afterwards and silently poisons their verdicts. The Calico operator's own
-// policies are namespaced NetworkPolicies in the calico-system tier and carry
-// app.kubernetes.io/managed-by=tigera-operator; the !=tigera-operator selector
-// also matches objects with the label absent, so we delete only test-applied
-// leftovers and never touch operator-managed baselines. Best-effort: errors are
-// returned for the caller to log, not fatal.
+// clusterScopedPolicyKinds lists the cluster-scoped policy CRDs each provider
+// installs. Only these exist on that provider's cluster; asking kubectl to
+// delete another provider's kinds fails with "the server doesn't have a
+// resource type" (which --ignore-not-found does NOT suppress — that only covers
+// missing instances of a known type). A provider absent from the map has no
+// cluster-scoped policy CRDs to reap.
+var clusterScopedPolicyKinds = map[string]string{
+	"calico": "globalnetworkpolicies.projectcalico.org,globalnetworksets.projectcalico.org,hostendpoints.projectcalico.org",
+	"cilium": "ciliumclusterwidenetworkpolicies.cilium.io",
+}
+
+// Remove all left-over's from an E2E run in the cluster.
 func (c *cluster) deleteOrphanClusterPolicies(ctx context.Context) (string, error) {
-	return c.kubectl(ctx, nil, "delete",
-		"globalnetworkpolicies.projectcalico.org,globalnetworksets.projectcalico.org,hostendpoints.projectcalico.org",
+	kinds := clusterScopedPolicyKinds[cfg.Provider]
+	if kinds == "" {
+		return "", nil
+	}
+	return c.kubectl(ctx, nil, "delete", kinds,
 		"-l", "app.kubernetes.io/managed-by!=tigera-operator",
 		"--ignore-not-found", "--wait=false")
 }

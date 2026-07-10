@@ -32,6 +32,8 @@ import (
 	"github.com/projectcalico/calico/felix/rules"
 	"github.com/projectcalico/calico/libcalico-go/lib/backend/model"
 	libnet "github.com/projectcalico/calico/libcalico-go/lib/net"
+
+	"github.com/frozenprocess/telepathy/api"
 )
 
 const hostname = "telepathy-node"
@@ -147,6 +149,24 @@ func Evaluate(req Request) Response {
 
 	addServiceColumns(&resp, req, actors)
 	buildActorReport(&resp, actors)
+
+	// Policy-efficiency cost: the portable structural+hygiene layer plus
+	// Calico's exact compiled dataplane weight. Only when asked, since the
+	// dataplane weight rebuilds the calc graph via RenderIptables.
+	if req.Cost {
+		resp.Cost = api.ComputeCost(req)
+		resp.Cost.Engine = "calico"
+		// Fill the engine-derived Structural axes from the calc graph we already
+		// built: peer breadth (resolved IP-set members) and the busiest
+		// endpoint's policy count (the "which policies match this endpoint" cost).
+		peers := 0
+		for _, m := range g.ipSetMembers {
+			peers += len(m)
+		}
+		resp.Cost.Structural.ResolvedPeers = peers
+		resp.Cost.Structural.MaxStack = maxPoliciesPerEndpoint(wepByID)
+		resp.Cost.Dataplane = costDataplane(req)
+	}
 	return resp
 }
 
