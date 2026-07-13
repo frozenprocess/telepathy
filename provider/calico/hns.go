@@ -187,8 +187,8 @@ func lintWindowsHNS(g graphResult) []string {
 		for _, r := range append(append([]*proto.Rule{}, pol.GetInboundRules()...), pol.GetOutboundRules()...) {
 			if reason := windowsDropReason(r); reason != "" {
 				warnings = append(warnings, fmt.Sprintf(
-					"%s %s: %s — Felix's Windows HNS renderer drops this rule, so its verdict "+
-						"diverges from Linux (see win_limitation.md)", id.Kind, id.Name, reason))
+					"%s %s: %s - Windows HNS renderer drops this rule, so its verdict "+
+						"diverges from Linux based dataplanes", id.Kind, id.Name, reason))
 			}
 		}
 	}
@@ -212,9 +212,8 @@ func lintWindowsHNS(g graphResult) []string {
 				if pol := g.store.PolicyByID[tid]; pol != nil && policyHasPassRule(pol) {
 					seenPass[tid.Name] = true
 					warnings = append(warnings, fmt.Sprintf(
-						"%s %s: Pass-action rule in the default (terminal) tier — Felix's Windows "+
-							"HNS renderer rewrites the trailing Pass to Block, so it denies where "+
-							"Linux falls through to the profile (see win_limitation.md)",
+						"%s %s: A full or a partial policy that becomes a pass in Windows"+
+							"will drop the traffic if its action is not determined in the same tier",
 						tid.Kind, tid.Name))
 				}
 			}
@@ -222,8 +221,8 @@ func lintWindowsHNS(g graphResult) []string {
 	}
 	if len(g.hepByName) > 0 {
 		warnings = append(warnings,
-			"HostEndpoint policy (applyOnForward / doNotTrack / preDNAT) is not programmed on "+
-				"Windows; these rules have no effect there (see win_limitation.md)")
+			"HostEndpoint and HEP policies (applyOnForward / doNotTrack / preDNAT) are not supported by "+
+				"Windows; these rules have no effect there")
 	}
 	sort.Strings(warnings)
 	return warnings

@@ -75,6 +75,7 @@ func feedPolicy(send func(model.Key, any), p PolicyInput, evaluateStaged bool, i
 		if err := yaml.Unmarshal([]byte(p.YAML), &cnp); err != nil {
 			return fmt.Errorf("parse Calico NetworkPolicy: %w", err)
 		}
+		defaultPolicyTypes(&cnp.Spec.Types, cnp.Spec.Ingress, cnp.Spec.Egress)
 		applyICMPFilter(&cnp, icmp)
 		return process(send, updateprocessors.NewNetworkPolicyUpdateProcessor(apiv3.KindNetworkPolicy),
 			model.ResourceKey{Kind: apiv3.KindNetworkPolicy, Name: cnp.Name, Namespace: cnp.Namespace}, &cnp)
@@ -83,6 +84,7 @@ func feedPolicy(send func(model.Key, any), p PolicyInput, evaluateStaged bool, i
 		if err := yaml.Unmarshal([]byte(p.YAML), &gnp); err != nil {
 			return fmt.Errorf("parse GlobalNetworkPolicy: %w", err)
 		}
+		defaultPolicyTypes(&gnp.Spec.Types, gnp.Spec.Ingress, gnp.Spec.Egress)
 		applyICMPFilter(&gnp, icmp)
 		return process(send, updateprocessors.NewGlobalNetworkPolicyUpdateProcessor(apiv3.KindGlobalNetworkPolicy),
 			model.ResourceKey{Kind: apiv3.KindGlobalNetworkPolicy, Name: gnp.Name}, &gnp)
@@ -169,6 +171,7 @@ func feedPolicy(send func(model.Key, any), p PolicyInput, evaluateStaged bool, i
 		if err := yaml.Unmarshal([]byte(p.YAML), &snp); err != nil {
 			return fmt.Errorf("parse StagedNetworkPolicy: %w", err)
 		}
+		defaultPolicyTypes(&snp.Spec.Types, snp.Spec.Ingress, snp.Spec.Egress)
 		applyICMPFilter(&snp, icmp)
 		return process(send, updateprocessors.NewStagedNetworkPolicyUpdateProcessor(),
 			model.ResourceKey{Kind: apiv3.KindStagedNetworkPolicy, Name: snp.Name, Namespace: snp.Namespace}, &snp)
@@ -180,6 +183,7 @@ func feedPolicy(send func(model.Key, any), p PolicyInput, evaluateStaged bool, i
 		if err := yaml.Unmarshal([]byte(p.YAML), &sgnp); err != nil {
 			return fmt.Errorf("parse StagedGlobalNetworkPolicy: %w", err)
 		}
+		defaultPolicyTypes(&sgnp.Spec.Types, sgnp.Spec.Ingress, sgnp.Spec.Egress)
 		applyICMPFilter(&sgnp, icmp)
 		return process(send, updateprocessors.NewStagedGlobalNetworkPolicyUpdateProcessor(),
 			model.ResourceKey{Kind: apiv3.KindStagedGlobalNetworkPolicy, Name: sgnp.Name}, &sgnp)
@@ -195,6 +199,28 @@ func feedPolicy(send func(model.Key, any), p PolicyInput, evaluateStaged bool, i
 			model.ResourceKey{Kind: apiv3.KindStagedKubernetesNetworkPolicy, Name: skp.Name, Namespace: skp.Namespace}, &skp)
 	default:
 		return fmt.Errorf("unsupported policy kind %q", tm.Kind)
+	}
+}
+
+// defaultPolicyTypes mirrors the Calico API-server write-path defaulting that
+// the engine bypasses by feeding YAML straight into the updateprocessor: an
+// unset Types is inferred from which rule lists are present ([Ingress] when
+// there are no egress rules, [Egress] when egress-only, both when both).
+// Without this, Felix's back-compat path (felix/calc/policy_sorter.go) treats
+// empty Types as Ingress+Egress, diverging from a live cluster. Runs before
+// applyICMPFilter so the inference sees the rules as written, like the API
+// server would.
+func defaultPolicyTypes(types *[]apiv3.PolicyType, ingress, egress []apiv3.Rule) {
+	if len(*types) != 0 {
+		return
+	}
+	switch {
+	case len(egress) == 0:
+		*types = []apiv3.PolicyType{apiv3.PolicyTypeIngress}
+	case len(ingress) == 0:
+		*types = []apiv3.PolicyType{apiv3.PolicyTypeEgress}
+	default:
+		*types = []apiv3.PolicyType{apiv3.PolicyTypeIngress, apiv3.PolicyTypeEgress}
 	}
 }
 
