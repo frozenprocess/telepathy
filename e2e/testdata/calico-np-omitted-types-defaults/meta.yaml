@@ -1,0 +1,13 @@
+# Calico-dialect case: exercises the engine's omitted-spec.types defaulting
+# against the API server's write-path inference on a live cluster.
+flavor: calico
+
+# world/internet (1.1.1.1) is a REAL address: no stand-in pod, no CIDR
+# remapping. Internet assertions ping the actual IP out through the node's
+# NAT; if the cluster has no internet egress those flows are quarantined.
+realInternet: true
+
+# Validate the rendered dataplane cost against the live node — types inference
+# decides which per-direction chains get programmed, so the count is sensitive
+# to exactly the behaviour under test.
+cost: true

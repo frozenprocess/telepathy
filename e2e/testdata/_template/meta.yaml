@@ -32,6 +32,15 @@ flavor: k8s
 # policy is exercised by traffic entering a node from outside.
 #externalProbe: false
 
+# realInternet (default false) — leave `role: external` endpoints unrealized:
+# the topology IP is a real off-cluster address (e.g. 1.1.1.1) probed as-is,
+# so internet flows genuinely leave the cluster via the node's NAT instead of
+# hitting a stand-in pod with remapped CIDRs. Use `protocol: icmp` on those
+# assertions (a public IP rarely serves the case's TCP port; ping is the
+# portable probe). Destination-only. Flows to an address the cluster can't
+# reach are quarantined, not failed. Mutually exclusive with externalProbe.
+#realInternet: false
+
 # hepAvoidColocation (default false) — steer HostEndpoint placement OFF the
 # nodes hosting the pods the HEP must police across the host boundary. A
 # wildcard ("*") HEP cannot police traffic to/from a pod on its OWN node (that

@@ -8,3 +8,8 @@ flavor: calico
 # Validate the rendered Calico dataplane cost weight against the live
 # node (Calico + Linux only; see e2e/cost.go).
 cost: true
+
+# world/internet is a REAL address: no stand-in pod. It resolves per run to a
+# random public resolver and the internet assertion pings it out through the
+# node's NAT (see _template/meta.yaml).
+realInternet: true

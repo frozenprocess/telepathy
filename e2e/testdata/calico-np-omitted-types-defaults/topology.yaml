@@ -1,0 +1,130 @@
+# Topology for testcase 'np-omitted-types-defaults'.
+# Intent: every policy in this case OMITS spec.types, so the engine must infer it from the rules present exactly as the Calico API server does on write: ingress-only rules -> [Ingress] (prod/frontend), egress-only rules -> [Egress] (prod/backend, whose Deny rule blocks the internet 1.1.1.0/24), both kinds of rules -> [Ingress, Egress] (prod/database), and no rules at all -> [Ingress] (dev/frontend, via a GNP). The discriminating assertions are the directions each policy must NOT isolate — prod/frontend egress, prod/backend ingress, dev/frontend egress stay open — which all flip to deny if empty types is misread as Ingress+Egress (Felix's back-compat interpretation). world/internet (IP 1.1.1.1) is the off-cluster destination that prod/backend's egress Deny rule blocks.
+#
+# Self-contained telepathy Request (endpoints + namespaces + probe + any
+# host endpoints / services / network sets the policy references). Run:
+#   telepathy test -assert assertions.yaml -policy policy.yaml < topology.yaml
+namespaces:
+  - name: prod
+    labels:
+      env: prod
+      purpose: policy-eval
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      env: dev
+      purpose: policy-eval
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      app: frontend
+      tier: web
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      app: backend
+      tier: app
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: prod/database
+    namespace: prod
+    name: database
+    ip: 10.0.0.3
+    labels:
+      app: database
+      tier: data
+      env: prod
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/frontend
+    namespace: dev
+    name: frontend
+    ip: 10.0.0.4
+    labels:
+      app: frontend
+      tier: web
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-control-plane
+  - id: dev/backend
+    namespace: dev
+    name: backend
+    ip: 10.0.0.5
+    labels:
+      app: backend
+      tier: app
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  - id: dev/database
+    namespace: dev
+    name: database
+    ip: 10.0.0.6
+    labels:
+      app: database
+      tier: data
+      env: dev
+    ports:
+      - name: http
+        port: 8080
+        protocol: tcp
+      - name: udp-echo
+        port: 8081
+        protocol: udp
+    node: telepathy-e2e-calico-worker
+  # The internet, as the ENGINE models it: never realized as a pod
+  # (realInternet in meta.yaml). The fictional 1.1.1.1 — and the policy CIDR
+  # 1.1.1.0/24 containing it — is remapped per run to a real public resolver
+  # (1.1.1.1 / 1.0.0.1 / 8.8.8.8 / 8.8.4.4) and pinged for real via the node's
+  # NAT. Removing this stanza breaks the case: the engine can no longer
+  # evaluate the internet flows and the probe has no address to resolve.
+  - id: world/internet
+    namespace: world
+    name: internet
+    ip: 1.1.1.1
+    labels:
+      scope: internet
+    role: external
+    unpoliced: true
+port: 8080
+protocol: tcp

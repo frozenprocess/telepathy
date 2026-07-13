@@ -18,6 +18,7 @@ assertions:
   - from: prod/frontend
     to: world/internet
     expect: allow
+    protocol: icmp # real ping (realInternet), not a stand-in pod
   - from: prod/backend
     to: prod/frontend
     expect: allow

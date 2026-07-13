@@ -1,0 +1,65 @@
+# All four combinations of omitted spec.types. The Calico API server defaults
+# an empty types from the rules present ([Ingress] when there are no egress
+# rules — including no rules at all — [Egress] when egress-only, both when
+# both); the engine must apply the same inference when fed raw YAML, instead
+# of Felix's back-compat "empty means Ingress+Egress".
+#
+# 1) ingress rules only -> [Ingress]. Denies all ingress to prod/frontend;
+#    frontend's EGRESS must stay open (the direction that flips under the bug).
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: frontend-ingress-only-no-types
+  namespace: prod
+spec:
+  selector: app == 'frontend'
+  ingress:
+    - action: Deny
+---
+# 2) egress rules only -> [Egress]. First rule blocks the internet
+#    (1.1.1.0/24 covers world/internet at 1.1.1.1), second allows everything
+#    else, so prod/backend can still reach pods; backend's INGRESS must stay
+#    open (flips under the bug: no ingress rules -> end-of-tier deny).
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: backend-egress-only-no-types
+  namespace: prod
+spec:
+  selector: app == 'backend'
+  egress:
+    - action: Deny
+      destination:
+        nets:
+          - 1.1.1.0/24
+    - action: Allow
+---
+# 3) both ingress and egress rules -> [Ingress, Egress]. prod/database talks
+#    only with prod/backend in both directions (namespaced NP selectors are
+#    namespace-scoped, so dev/backend does NOT match). Same result under the
+#    bug — included to complete the combination matrix.
+apiVersion: projectcalico.org/v3
+kind: NetworkPolicy
+metadata:
+  name: database-both-no-types
+  namespace: prod
+spec:
+  selector: app == 'database'
+  ingress:
+    - action: Allow
+      source:
+        selector: app == 'backend'
+  egress:
+    - action: Allow
+      destination:
+        selector: app == 'backend'
+---
+# 4) no rules at all -> [Ingress] (the "including the case where there are
+#    also no Ingress rules" clause). A rule-less GNP is an ingress default-deny
+#    for dev/frontend; its EGRESS must stay open (flips under the bug).
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: dev-frontend-no-rules-no-types
+spec:
+  selector: env == 'dev' && app == 'frontend'

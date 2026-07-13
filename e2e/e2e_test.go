@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,12 @@ import (
 
 // All tunables (env-backed knobs and the timing constants) live on the package's
 // Config; see config.go. The harness reads them through the package-level cfg.
+
+// internetIPs are live public anycast resolvers (Cloudflare primary/secondary,
+// Google primary/secondary), all of which answer ICMP echo. A realInternet
+// endpoint resolves to one of these at random each run, so the internet test
+// exercises a real off-cluster address without hard-depending on one operator.
+var internetIPs = []string{"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"}
 
 // TestE2E runs every applicable e2e/testdata case and fails if any assertion is
 // wrong. By default it compares the engine against the live cluster's dataplane;
@@ -201,6 +208,18 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	// north-south cases (preDNAT/NodePort) where the policy is exercised by
 	// traffic entering a node from outside. See doc.go / README.
 	externalProbe := readMetaFlag(t, filepath.Join(dir, "meta.yaml"), "externalProbe")
+	// realInternet leaves `role: external` endpoints completely unrealized: the
+	// topology IP is a real, off-cluster address (e.g. 1.1.1.1) and probes to it
+	// leave the cluster through the node's NAT for a genuine internet-egress
+	// test, instead of hitting an in-cluster stand-in pod with remapped CIDRs.
+	// Such endpoints are destination-only, and their assertions should use
+	// `protocol: icmp` (a public IP rarely answers the case's TCP port; ping is
+	// the portable reachability probe). If the address is unreachable from a
+	// cluster node (offline CI), its flows are quarantined, not failed.
+	realInternet := readMetaFlag(t, filepath.Join(dir, "meta.yaml"), "realInternet")
+	if externalProbe && realInternet {
+		t.Fatalf("meta.yaml sets both externalProbe and realInternet — they claim the same role:external endpoints; pick one")
+	}
 	// costCheck validates the policy rules telepathy renders for this case against
 	// the rules the cluster actually programs (opt-in per case via `cost: true` in
 	// meta.yaml). Calico only; the dataplane read is OS-specific (iptables on
@@ -241,9 +260,15 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		return externalProbe && strings.EqualFold(e.Role, "external")
 	}
 	externalEP := map[string]bool{}
+	// Real off-cluster destinations under realInternet: no pod, no observer
+	// container, no IP rewriting — probed at the address as written.
+	realEP := map[string]bool{}
 	for _, e := range req.Endpoints {
 		if isExternal(e) {
 			externalEP[e.ID] = true
+		}
+		if realInternet && strings.EqualFold(e.Role, "external") {
+			realEP[e.ID] = true
 		}
 	}
 
@@ -396,8 +421,8 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		nsLabels[n.Name] = n.Labels
 	}
 	for _, e := range req.Endpoints {
-		if isExternal(e) {
-			continue // off-cluster observer: no pod, so no namespace to create
+		if isExternal(e) || realEP[e.ID] {
+			continue // off-cluster (observer or real address): no pod, so no namespace to create
 		}
 		if _, ok := nsLabels[e.Namespace]; !ok {
 			nsLabels[e.Namespace] = nil
@@ -477,6 +502,9 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	for _, ep := range req.Endpoints { // ep is a copy; mutating it won't touch req
 		if externalEP[ep.ID] {
 			continue // off-cluster observer: a Docker container, not a pod (launched below)
+		}
+		if realEP[ep.ID] {
+			continue // real off-cluster address: nothing to realize, probed as-is
 		}
 		// Pin the pod to a node of the configured OS (E2E_OS, default linux) so the
 		// policy is enforced by that OS's dataplane — Windows/HNS under E2E_OS=windows.
@@ -728,6 +756,18 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 
 	podIPByID := map[string]string{}
 	for _, ep := range req.Endpoints {
+		if realEP[ep.ID] {
+			// Real off-cluster destination: its "real IP" is a live public anycast
+			// address chosen per-run, never a pod. buildIPRewriter then remaps the
+			// endpoint's fictional IP — and any policy CIDR containing it (e.g.
+			// 1.1.1.0/24 -> <chosen>/32) — exactly like it does for pods, so the
+			// applied policy matches the chosen address on the wire and the probe
+			// pings it out through the node's NAT.
+			ip := internetIPs[rand.Intn(len(internetIPs))]
+			podIPByID[ep.ID] = ip
+			t.Logf("realInternet: %s resolves to %s this run", ep.ID, ip)
+			continue
+		}
 		if externalEP[ep.ID] {
 			// Off-cluster observer: its "real IP" is the Docker container's address,
 			// harvested above. Feeding it here lets buildIPRewriter map the endpoint's
@@ -742,6 +782,38 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		}
 		podIPByID[ep.ID] = ip
 	}
+	// realInternet baseline: ping each real address from one of this case's own
+	// pods BEFORE the policy lands (pods are Ready here, policy applies in
+	// phase 4, so all egress is still open). This exercises the exact path the
+	// assertions use — pod, node NAT, internet — with the Linux agnhost image's
+	// bundled ping (kind node containers ship no ping binary, so probing from
+	// the node would false-negative). A cluster with no internet egress would
+	// misreport every expect=allow internet flow as a policy DIFF; instead
+	// those flows are quarantined below with this reason.
+	internetDown := map[string]bool{}
+	if len(realEP) > 0 {
+		var blNS, blPod string
+		for _, ep := range req.Endpoints {
+			if podNameByID[ep.ID] != "" && osByID[ep.ID] == "linux" {
+				blNS, blPod = ep.Namespace, podNameByID[ep.ID]
+				break
+			}
+		}
+		if blPod == "" {
+			t.Fatalf("realInternet: no Linux pod available to baseline internet reachability")
+		}
+		for _, ep := range req.Endpoints {
+			if !realEP[ep.ID] {
+				continue
+			}
+			if ok, out, err := pingOnce(ctx, c, blNS, blPod, podIPByID[ep.ID]); !ok {
+				internetDown[ep.ID] = true
+				t.Logf("realInternet: %s (%s) unreachable from pod %s/%s pre-policy — quarantining its flows: %v\n%s",
+					ep.ID, podIPByID[ep.ID], blNS, blPod, err, strings.TrimSpace(out))
+			}
+		}
+	}
+
 	nodeIP := map[string]string{}
 	hostIPByName := map[string]string{}
 	for _, h := range req.HostEndpoints {
@@ -915,6 +987,17 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		// scored — see quarantine.yaml in the case dir.
 		if reason, ok := quarantine[a.From+"->"+a.To]; ok {
 			rw.quarantined = reason
+			return rw
+		}
+		// realInternet flows the environment can't reproduce: an offline cluster
+		// can't demonstrate an allow to a real address (recorded, not scored),
+		// and a real address can't originate probes at all.
+		if internetDown[a.To] {
+			rw.quarantined = "no internet egress from cluster (baseline ping failed)"
+			return rw
+		}
+		if realEP[a.From] {
+			rw.probeErr = "realInternet endpoint is destination-only (nothing to probe from)"
 			return rw
 		}
 

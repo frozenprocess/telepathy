@@ -122,14 +122,19 @@ func probeOnce(ctx context.Context, c *cluster, src probeSource, dst probeTarget
 		}
 		// The sender needs a ping client, which only the Linux agnhost image has, so
 		// the harness always pins ICMP-source pods to a Linux node (see e2e_test.go).
-		// ICMP has no port; ping from the agnhost container (bundles busybox ping).
-		out, exitErr := c.exec(ectx, src.ns, src.pod, "agnhost",
-			"/bin/ping", "-c", "1", "-W", "2", dst.ip)
-		if ectx.Err() == context.DeadlineExceeded {
-			return false, out, fmt.Errorf("probe exec exceeded %s (exec channel stalled)", cfg.ProbeExecTimeout)
-		}
-		return exitErr == nil, out, nil
+		return pingOnce(ectx, c, src.ns, src.pod, dst.ip)
 	default:
 		return false, "", fmt.Errorf("unsupported probe protocol %q", proto)
 	}
+}
+
+// pingOnce sends a single ICMP echo from a pod's agnhost container (which
+// bundles busybox ping; ICMP has no port). Shared by the icmp probe and the
+// realInternet reachability baseline so both exercise the identical command.
+func pingOnce(ctx context.Context, c *cluster, ns, pod, ip string) (ok bool, out string, err error) {
+	out, exitErr := c.exec(ctx, ns, pod, "agnhost", "/bin/ping", "-c", "1", "-W", "2", ip)
+	if ctx.Err() == context.DeadlineExceeded {
+		return false, out, fmt.Errorf("probe exec exceeded %s (exec channel stalled)", cfg.ProbeExecTimeout)
+	}
+	return exitErr == nil, out, nil
 }

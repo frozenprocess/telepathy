@@ -139,8 +139,8 @@ var (
 // keeps the original behaviour; every subcommand defaults to it.
 const defaultProvider = "calico"
 
-// capability describes one subcommand, surfaced by --version so a caller can
-// discover the feature set without scraping the help text.
+// capability describes one subcommand, listed by --help so a caller can
+// discover the feature set.
 type capability struct {
 	name, desc string
 }
@@ -149,14 +149,15 @@ var capabilities = []capability{
 	{"evaluate", "pod-to-pod connectivity matrix (default; Request in, JSON Response out)"},
 	{"test", "gate a topology against a connectivity assertions file (non-zero exit on failure)"},
 	{"diff", "compare two evaluate Responses and report opened/closed/added/removed flows (PR-comment markdown)"},
+	{"cost", "rate policy efficiency: structural cost + hygiene findings (lower is leaner)"},
 	{"iptables", "render the iptables/nftables chains Felix would program"},
 	{"bpf", "render the eBPF policy program Felix would JIT-assemble per endpoint/direction"},
 	{"hns", "render the Windows HNS ACL rules Felix would program per endpoint/direction"},
 }
 
-// printVersion writes the version banner and capability list to stdout. It is
-// reached by the top-level `version` subcommand and the `--version`/`-version`
-// flags.
+// printVersion writes the version banner and the available providers to stdout.
+// It is reached by the top-level `version` subcommand and the
+// `--version`/`-version` flags. Subcommands live in --help, not here.
 func printVersion() {
 	fmt.Printf("telepathy %s\n", engineVersion)
 	fmt.Printf("  built against Calico %s\n", calicoVersion)
@@ -176,16 +177,39 @@ func printVersion() {
 		}
 		fmt.Printf("  %-9s%s  %d policy capabilities\n", name, marker, caps)
 	}
+}
+
+// printHelp writes usage, the subcommand list, and the shared input flags to
+// stdout. It is reached by `-h`/`--help` and by the default flagset's Usage.
+func printHelp() {
+	fmt.Println("telepathy — in-process Kubernetes/CNI network-policy evaluator")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  telepathy [flags]              evaluate connectivity (Request in, JSON Response out)")
+	fmt.Println("  telepathy <subcommand> [flags]")
 	fmt.Println()
 	fmt.Println("Subcommands:")
 	for _, c := range capabilities {
 		fmt.Printf("  %-9s %s\n", c.name, c.desc)
 	}
+	fmt.Printf("  %-9s %s\n", "version", "print the engine version and available providers")
+	fmt.Println()
+	fmt.Println("Shared flags:")
+	fmt.Println("  -policy FILE|DIR   append policy manifest(s) to the stdin Request (repeatable)")
+	fmt.Printf("  -provider NAME     select the CNI engine (have: %s; default %s)\n",
+		strings.Join(provider.List(), ", "), defaultProvider)
+	fmt.Println()
+	fmt.Println("Run `telepathy <subcommand> -h` for a subcommand's own flags.")
 }
 
 // isVersionArg reports whether s requests the version banner.
 func isVersionArg(s string) bool {
 	return s == "version" || s == "--version" || s == "-version" || s == "-v"
+}
+
+// isHelpArg reports whether s requests the top-level help.
+func isHelpArg(s string) bool {
+	return s == "help" || s == "--help" || s == "-help" || s == "-h"
 }
 
 func main() {
@@ -198,6 +222,10 @@ func main() {
 	// version is handled before the others so it never blocks on stdin.
 	if len(os.Args) > 1 && isVersionArg(os.Args[1]) {
 		printVersion()
+		return
+	}
+	if len(os.Args) > 1 && isHelpArg(os.Args[1]) {
+		printHelp()
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "iptables" {
@@ -220,17 +248,91 @@ func main() {
 		runDiff(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "cost" {
+		runCost(os.Args[2:])
+		return
+	}
 
 	fs := flag.NewFlagSet("telepathy", flag.ExitOnError)
+	fs.Usage = printHelp
 	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	p := mustProvider(*prov)
 	req := loadRequest(*policies)
 	resp := p.Evaluate(req)
+	if req.Cost {
+		resp.Cost = costOrFallback(resp.Cost, req, *prov)
+	}
 	if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
 		fail("encode response: %v", err)
 	}
+}
+
+// costOrFallback returns the engine's cost report, or the portable
+// api.ComputeCost when the engine didn't fill it (e.g. antrea/cilium) — so
+// req.Cost is always honoured regardless of provider.
+func costOrFallback(report *api.CostReport, req api.Request, prov string) *api.CostReport {
+	if report == nil {
+		report = api.ComputeCost(req)
+		report.Engine = prov
+	}
+	return report
+}
+
+// runCost implements `telepathy cost`: the portable policy-efficiency cost
+// computed from the Request alone, so it works for any provider. -json emits the
+// CostReport; the default is a human-readable summary.
+func runCost(args []string) {
+	fs := flag.NewFlagSet("cost", flag.ExitOnError)
+	asJSON := fs.Bool("json", false, "emit the structured JSON CostReport instead of text")
+	dataplane := fs.String("dataplane", "iptables", "dataplane to weigh for the exact cost: iptables | nftables | bpf | hns")
+	policies, prov := addRequestFlags(fs)
+	_ = fs.Parse(args)
+
+	p := mustProvider(*prov)
+	req := loadRequest(*policies)
+	req.Cost = true
+	req.CostDataplane = *dataplane
+	report := costOrFallback(p.Evaluate(req).Cost, req, *prov)
+
+	if *asJSON {
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			fail("encode report: %v", err)
+		}
+		return
+	}
+	fmt.Print(formatCost(report))
+}
+
+// formatCost renders a CostReport as a human-readable summary.
+func formatCost(r *api.CostReport) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Policy efficiency cost: %d  (lower is leaner; formula v%d)\n", r.Cost, r.FormulaVersion)
+	s := r.Structural
+	fmt.Fprintf(&b, "  structural: %d policies, %d rules, %d CIDRs, %d ports, %d negations",
+		s.Policies, s.Rules, s.CIDRs, s.Ports, s.Negations)
+	if s.MaxStack > 0 {
+		fmt.Fprintf(&b, ", %d policies on busiest endpoint", s.MaxStack)
+	}
+	b.WriteByte('\n')
+	if d := r.Dataplane; d != nil {
+		fmt.Fprintf(&b, "  dataplane (%s): %d %s + %d peer set-entries in %d IP sets\n",
+			d.Kind, d.Rules, d.RulesUnit, d.PeerEntries, d.IPSets)
+	}
+	if len(r.Hygiene) == 0 {
+		fmt.Fprintf(&b, "  hygiene: no findings\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "  hygiene:\n")
+	for _, f := range r.Hygiene {
+		where := f.Policy
+		if f.Rule > 0 {
+			where = fmt.Sprintf("%s rule %d", f.Policy, f.Rule)
+		}
+		fmt.Fprintf(&b, "    -%-2d [%s] %s: %s\n", f.Penalty, f.Code, where, f.Detail)
+	}
+	return b.String()
 }
 
 // stringSlice collects a repeatable flag (e.g. -policy a.yaml -policy b.yaml).

@@ -1,0 +1,76 @@
+# Connectivity assertions for 'np-omitted-types-defaults'. The KEY lines are
+# the directions the omitted-types policies must NOT isolate; they flip to
+# deny if empty types is misread as Ingress+Egress.
+assertions:
+  # 1) prod/frontend: ingress-only rules -> [Ingress]. All ingress denied...
+  - from: prod/backend
+    to: prod/frontend
+    expect: deny
+  - from: dev/backend
+    to: prod/frontend
+    expect: deny
+  # ...but egress stays open (KEY).
+  - from: prod/frontend
+    to: prod/backend
+    expect: allow
+  - from: prod/frontend
+    to: dev/backend
+    expect: allow
+  - from: prod/frontend
+    to: world/internet
+    expect: allow
+    protocol: icmp # real ping to 1.1.1.1 (realInternet), not a stand-in pod
+  # 2) prod/backend: egress-only rules -> [Egress]. Internet blocked by the
+  # Deny nets rule (KEY)...
+  - from: prod/backend
+    to: world/internet
+    expect: deny
+    protocol: icmp
+  # ...other egress allowed by the catch-all Allow...
+  - from: prod/backend
+    to: prod/database
+    expect: allow
+  - from: prod/backend
+    to: dev/database
+    expect: allow
+  # ...and ingress stays open (KEY).
+  - from: prod/database
+    to: prod/backend
+    expect: allow
+  - from: dev/backend
+    to: prod/backend
+    expect: allow
+  # 3) prod/database: both rule kinds -> [Ingress, Egress]. Talks only with
+  # prod/backend; namespaced selectors are ns-scoped so dev/backend is out.
+  - from: prod/database
+    to: dev/backend
+    expect: deny
+  - from: prod/database
+    to: world/internet
+    expect: deny
+    protocol: icmp
+  - from: dev/backend
+    to: prod/database
+    expect: deny
+  - from: prod/frontend
+    to: prod/database
+    expect: deny
+  # 4) dev/frontend: no rules at all -> [Ingress] default-deny. Ingress denied...
+  - from: dev/backend
+    to: dev/frontend
+    expect: deny
+  - from: prod/backend
+    to: dev/frontend
+    expect: deny
+  # ...but egress stays open (KEY).
+  - from: dev/frontend
+    to: dev/backend
+    expect: allow
+  - from: dev/frontend
+    to: world/internet
+    expect: allow
+    protocol: icmp
+  # Unpoliced pair sanity check.
+  - from: dev/backend
+    to: dev/database
+    expect: allow
