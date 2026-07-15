@@ -212,7 +212,7 @@ func lintWindowsHNS(g graphResult) []string {
 				if pol := g.store.PolicyByID[tid]; pol != nil && policyHasPassRule(pol) {
 					seenPass[tid.Name] = true
 					warnings = append(warnings, fmt.Sprintf(
-						"%s %s: A full or a partial policy that becomes a pass in Windows"+
+						"%s %s: Pass-action, A full or a partial policy that becomes a pass in Windows"+
 							"will drop the traffic if its action is not determined in the same tier",
 						tid.Kind, tid.Name))
 				}
