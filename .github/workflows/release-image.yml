@@ -1,8 +1,9 @@
-name: Release image
+name: Release
 
 # Publish the telepathy image to GHCR so the Telepathy Action's default
-# image (ghcr.io/<owner>/<repo>:latest) exists for consumers. Runs on version
-# tags (v*) and can be triggered manually.
+# image (ghcr.io/<owner>/<repo>:latest) exists for consumers, and attach the
+# built engine binaries to the GitHub Release. Runs on version tags (v*) and
+# can be triggered manually.
 on:
   push:
     tags: ["v*"]
@@ -35,3 +36,43 @@ jobs:
           build-args: |
             ENGINE_VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
+
+  # Build the three engine binaries with the real toolchain (make build clones
+  # the pinned Calico/Antrea/Cilium trees and generates every go.work) and
+  # attach them to the GitHub Release. The engine is Linux-only, so binaries
+  # are linux/<arch> only — no macOS/Windows.
+  binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release + upload assets
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    env:
+      GOTOOLCHAIN: auto
+      GOOS: linux
+      GOARCH: ${{ matrix.goarch }}
+      ENGINE_VERSION: ${{ github.ref_name }}
+      GIT_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build engine binaries (clones sources, wires go.work)
+        # CGO_ENABLED=0 is exported by the Makefile, so GOARCH cross-compiles
+        # cleanly. ENGINE_VERSION/GIT_COMMIT get stamped into the shell binary.
+        run: make build
+      - name: Name binaries per-arch
+        # Suffix each binary with the platform so all three are individually
+        # downloadable from the Release, and arches don't collide.
+        run: |
+          mkdir -p dist
+          for f in bin/*; do
+            cp "$f" "dist/$(basename "$f")-linux-${GOARCH}"
+          done
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2  # renovate: datasource=github-tags depName=softprops/action-gh-release
+        with:
+          files: dist/*

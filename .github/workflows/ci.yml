@@ -44,12 +44,14 @@ jobs:
         # Its own module/workspace (Antrea's native dependency versions), so it
         # is tested from inside engines/antrea. `make build` wired its go.work.
         run: cd engines/antrea && go test ./...
+        run: cd engines/cilium && go test ./...
       # - name: Assertion gate (make verify)
       #   run: make verify
       - name: Full assertion sweep (make verify-all — every e2e/testdata/<case>/, every provider)
         run: |
           make verify-all PROVIDER=calico
           make verify-all PROVIDER=antrea
+          make verify-all PROVIDER=cilium
       - name: Connectivity diff demo (make diff-demo)
         run: make diff-demo
 
