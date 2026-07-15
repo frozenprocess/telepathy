@@ -44,6 +44,7 @@ jobs:
         # Its own module/workspace (Antrea's native dependency versions), so it
         # is tested from inside engines/antrea. `make build` wired its go.work.
         run: cd engines/antrea && go test ./...
+      - name: Unit tests — out-of-process Cilium engine
         run: cd engines/cilium && go test ./...
       # - name: Assertion gate (make verify)
       #   run: make verify
