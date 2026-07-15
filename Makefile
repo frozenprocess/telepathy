@@ -46,6 +46,13 @@ ANTREA_MOD     ?= engines/antrea
 CILIUM_BIN     ?= bin/telepathy-engine-cilium
 CILIUM_MOD     ?= engines/cilium
 
+# Hard timeout for the `e2e` go test binary. A full Calico sweep (~70 live cases,
+# incl. slow HEP cases) runs ~45-60min, so 60m left no headroom — and a SIGKILL
+# on timeout skips t.Cleanup, leaking HostEndpoints/policy that poison the next
+# run. 120m gives room for the occasional CNI/apiserver blip. Override for a
+# targeted subset (CASE=...) where a shorter bound catches hangs sooner.
+E2E_TIMEOUT    ?= 120m
+
 # Docker build environment. GO_VERSION tracks .go-version so the container
 # toolchain matches what the repo pins; override either var to retarget.
 GO_VERSION     ?= $(shell cat .go-version 2>/dev/null || echo 1.25.6)
@@ -366,7 +373,7 @@ e2e: build  ## Stand up kind+$(PROVIDER) and compare every e2e/testdata case's r
 		fi; \
 	fi
 	@CLUSTER_NAME=$(CLUSTER_NAME)-$(PROVIDER) TELEPATHY_BIN=$(abspath $(BIN)) E2E_PROVIDER=$(PROVIDER) E2E_OS=$(E2E_OS) \
-		go test -tags e2e -timeout 60m -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
+		go test -tags e2e -timeout $(E2E_TIMEOUT) -count=1 ./e2e/... -v $(if $(CASE),-run 'TestE2E/$(CASE)',)
 
 e2e-help:  ## Show all e2e options (providers, vars, and examples)
 	@echo "telepathy e2e — run a real cluster and compare its connectivity against the engine"
