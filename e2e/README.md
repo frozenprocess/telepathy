@@ -9,7 +9,7 @@ checks the engine against hand-authored `expect` values.
 
 ```bash
 make e2e                              # bring up the cluster (hacks/provision/calico-up.sh) + run every applicable case
-make e2e CASE=np-deny-all-ingress     # run a single case
+make e2e CASE=calico-np-deny-all-ingress     # run a single case
 make e2e CASE=gnp-                    # run every case whose name matches (regex passed to -run)
 E2E_INCLUDE_HEP=1 make e2e            # also run the HostEndpoint cases (see below)
 E2E_OS=windows make e2e               # schedule the workload pods on a Windows node (see below)
@@ -56,7 +56,7 @@ harness snapshots each failed case **before teardown deletes it** into
 `<dir>/<case>/`:
 
 ```bash
-E2E_ARTIFACTS=$(pwd)/e2e-artifacts make e2e CASE=gnp-order-deny-before-allow
+E2E_ARTIFACTS=$(pwd)/e2e-artifacts make e2e CASE=calico-gnp-order-deny-before-allow
 ```
 
 Each case directory contains:
@@ -89,7 +89,7 @@ resources (namespaces, pods, policy, HEPs, netsets) in place instead of tearing
 them down, so you can inspect the live scene with `kubectl`:
 
 ```bash
-E2E_KEEP=1 make e2e CASE=gnp-order-deny-before-allow
+E2E_KEEP=1 make e2e CASE=calico-gnp-order-deny-before-allow
 # ...then, against the kept cluster:
 kubectl --context kind-telepathy-e2e-calico-calico get pods,networkpolicies,globalnetworkpolicies -A
 kubectl --context kind-telepathy-e2e-calico-calico exec -n <ns> <pod> -c agnhost -- /agnhost connect <ip>:<port> --protocol=tcp
@@ -114,7 +114,7 @@ the namespaces by hand.
 
 ## HostEndpoint cases (opt-in)
 
-The three `gnp-hep-*` cases attach Calico `HostEndpoint`s and **narrow Calico's
+The three `calico-gnp-hep-*` cases attach Calico `HostEndpoint`s and **narrow Calico's
 failsafe host ports to a control-plane-only set** (apiserver, etcd, kubelet,
 ssh, BGP, DNS, **Typha**) cluster-wide for the duration of the case. Calico's
 failsafe rules unconditionally allow their listed ports, so the probe ports must
@@ -143,7 +143,7 @@ can't faithfully reproduce — environment limits, not engine bugs. Each entry i
 score them (they show as `QUARANTINED` in the table). `make verify-all` (engine
 vs authored `expect`) still covers them in full.
 
-The motivating example is `gnp-hep-donottrack-database-to-host`: a `pod ->
+The motivating example is `calico-gnp-hep-donottrack-database-to-host`: a `pod ->
 node-IP` flow (a database pod reaching the HostEndpoint's node address) is
 source-NAT'd to the source node's IP by the IP pool's `natOutgoing`, because the
 node IP is outside the pod CIDR. The HostEndpoint never sees the pod's
@@ -178,7 +178,7 @@ DNAT: the engine evaluates the flow to the backend pod, the dataplane evaluates
 change across the DNAT. A destination/port-keyed preDNAT rule would *not* line
 up and needs engine support first.
 
-The reference case is `gnp-hep-prednat-nodeport-block-external`: two observers
+The reference case is `calico-gnp-hep-prednat-nodeport-block-external`: two observers
 (one source CIDR denied by a preDNAT GlobalNetworkPolicy, one allowed) reach a
 NodePort-fronted backend; the deny fires before DNAT on the entry node. Like all
 HostEndpoint cases it requires `E2E_INCLUDE_HEP=1`.

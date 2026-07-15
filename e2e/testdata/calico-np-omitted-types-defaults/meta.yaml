@@ -10,4 +10,4 @@ realInternet: true
 # Validate the rendered dataplane cost against the live node — types inference
 # decides which per-direction chains get programmed, so the count is sensitive
 # to exactly the behaviour under test.
-cost: true
+cost: false

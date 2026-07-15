@@ -32,13 +32,14 @@ flavor: k8s
 # policy is exercised by traffic entering a node from outside.
 #externalProbe: false
 
-# realInternet (default false) — leave `role: external` endpoints unrealized:
-# the topology IP is a real off-cluster address (e.g. 1.1.1.1) probed as-is,
-# so internet flows genuinely leave the cluster via the node's NAT instead of
-# hitting a stand-in pod with remapped CIDRs. Use `protocol: icmp` on those
-# assertions (a public IP rarely serves the case's TCP port; ping is the
-# portable probe). Destination-only. Flows to an address the cluster can't
-# reach are quarantined, not failed. Mutually exclusive with externalProbe.
+# realInternet (default false) — realize `role: external` endpoints as an
+# off-cluster agnhost container on the kind network (a listening netexec server),
+# representing an internet destination. A cluster pod reaches it at its container
+# IP through the node's NAT; buildIPRewriter remaps the endpoint's fictional IP
+# (and any policy CIDR containing it) to that IP, so the policy matches on the
+# wire. Deterministic — no dependency on real internet egress (which CI blocks).
+# Destination-only; tcp/udp/icmp all work (the container serves L4 and answers
+# ping). Mutually exclusive with externalProbe.
 #realInternet: false
 
 # hepAvoidColocation (default false) — steer HostEndpoint placement OFF the
@@ -53,3 +54,7 @@ flavor: k8s
 # engine-vs-cluster DIFF. Multi-node HEP cases typically need 3 (control-plane
 # + 2 workers) so a worker can host none of the policed pods.
 #minNodes: 3
+
+# Validate the rendered Calico dataplane cost weight against the live
+# node (Calico + Linux only; see e2e/cost.go).
+# cost: true

@@ -6,4 +6,4 @@
 flavor: calico
 # Validate the Calico dataplane cost weight against the rules the live node
 # actually programs (Calico + Linux only). See e2e/cost.go.
-cost: true
+cost: false

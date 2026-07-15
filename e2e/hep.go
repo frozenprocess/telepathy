@@ -23,6 +23,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
+	"testing"
+	"time"
 )
 
 // hostNS is the namespace that holds the hostNetwork pods standing in for Calico
@@ -46,6 +49,13 @@ const hostNS = "telepathy-host"
 // calico-node crash-loops cluster-wide ("Typha discovery failed"), which
 // degrades the dataplane for the whole run — so it MUST stay open in both
 // directions even while we narrow everything else.
+// Note 4789 (VXLAN): same reasoning. Cross-node POD traffic on a VXLAN cluster
+// is UDP/4789 encapped between node IPs; a *-interface HEP polices that host
+// traffic too, so if 4789 isn't a failsafe every cross-node pod flow is dropped
+// while the HEP case runs — and the dropped flows leave INVALID conntrack that
+// keeps being dropped after teardown, poisoning later cases with control-plane
+// pods (a false-deny "no route to host"/timeout unrelated to the policy). Must
+// stay open both directions, like BGP/Typha.
 const minimalFailsafes = `{"spec":{` +
 	`"failsafeInboundHostPorts":[` +
 	`{"protocol":"TCP","port":22},` + // ssh
@@ -53,6 +63,7 @@ const minimalFailsafes = `{"spec":{` +
 	`{"protocol":"TCP","port":2379},{"protocol":"TCP","port":2380},` + // etcd
 	`{"protocol":"TCP","port":10250},` + // kubelet
 	`{"protocol":"TCP","port":5473},` + // calico-typha
+	`{"protocol":"UDP","port":4789},` + // VXLAN (cross-node pod overlay)
 	`{"protocol":"TCP","port":179}` + // BGP
 	`],` +
 	`"failsafeOutboundHostPorts":[` +
@@ -60,24 +71,83 @@ const minimalFailsafes = `{"spec":{` +
 	`{"protocol":"TCP","port":2379},{"protocol":"TCP","port":2380},` + // etcd
 	`{"protocol":"UDP","port":53},{"protocol":"TCP","port":53},` + // DNS
 	`{"protocol":"TCP","port":5473},` + // calico-node -> calico-typha
+	`{"protocol":"UDP","port":4789},` + // VXLAN (cross-node pod overlay)
 	`{"protocol":"TCP","port":179}` + // BGP
 	`]}}`
 
-// setFailsafes narrows Calico's failsafe host ports to minimalFailsafes while a
-// HostEndpoint case runs (constrain=true), then restores them (constrain=false).
-// Restoring is a merge patch with null, which drops the field so Felix falls
-// back to its built-in defaults rather than to whatever was there before.
-func setFailsafes(ctx context.Context, c *cluster, constrain bool) error {
-	patch := `{"spec":{"failsafeInboundHostPorts":null,"failsafeOutboundHostPorts":null}}`
-	if constrain {
-		patch = minimalFailsafes
-	}
+// narrowFailsafes narrows Calico's failsafe host ports to minimalFailsafes so a
+// HostEndpoint case's policy (not a failsafe) decides the probe ports. It is
+// NEVER restored per-case, on purpose: changing FailsafeInbound/OutboundHostPorts
+// forces a full Felix restart on every node (Calico requires it), and that
+// restart briefly severs calico-node↔apiserver — stranding any pod scheduled
+// meanwhile in ContainerCreating and poisoning the next case. So narrow once and
+// leave it: the patch is idempotent (re-patching identical values is a no-op, no
+// restart), and narrowed failsafes are inert on nodes with no HostEndpoint, so
+// non-HEP cases are unaffected. The single restart happens on the first HEP
+// case's narrow, after its pods already exist, and its settle absorbs it.
+func narrowFailsafes(ctx context.Context, c *cluster) error {
 	out, err := c.kubectl(ctx, nil, "patch", "felixconfiguration", "default",
-		"--type", "merge", "-p", patch)
+		"--type", "merge", "-p", minimalFailsafes)
 	if err != nil {
-		return cmdErr(fmt.Sprintf("patch felixconfiguration failsafes (constrain=%v)", constrain), out, err)
+		return cmdErr("patch felixconfiguration failsafes (narrow)", out, err)
 	}
 	return nil
+}
+
+// repairLeakedHEPState undoes a HostEndpoint a prior case leaked by NOT running
+// its teardown: a timed-out (`go test -timeout`) or killed run never runs
+// t.Cleanup, so its HostEndpoints persist. A leaked HostEndpoint on the
+// control-plane node default-drops FORWARDED (cross-node) pod traffic — silently
+// poisoning every later case — and tigerastatus stays Available throughout, so
+// ensureClusterHealthy can't see it. The per-case deleteOrphanClusterPolicies
+// reaps the object but --wait=false, so the dataplane drop chains can outlive
+// it. This does the synchronous repair, but ONLY when a leak is detected — a
+// clean run pays one get. Calico only.
+//
+// Narrowed failsafes are NOT treated as a leak: narrowing is idempotent and
+// inert without a HostEndpoint, and is deliberately left in place across cases
+// (toggling FailsafeHostPorts forces a Felix restart — see narrowFailsafes), so a
+// leaked narrow needs no repair; deleting the orphan HEP is enough.
+func repairLeakedHEPState(ctx context.Context, t *testing.T, c *cluster) {
+	if cfg.Provider != "calico" {
+		return
+	}
+	heps, err := c.kubectl(ctx, nil, "get", "hostendpoints.projectcalico.org",
+		"-l", "app.kubernetes.io/managed-by!=tigera-operator",
+		"-o", "jsonpath={.items[*].metadata.name}")
+	if err != nil {
+		t.Logf("repair HEP state: list hostendpoints: %v\n%s", err, heps)
+		return
+	}
+	if strings.TrimSpace(heps) == "" {
+		return // clean baseline — the common path
+	}
+	t.Logf("repairing leaked HostEndpoints from an interrupted prior run: %q", strings.TrimSpace(heps))
+
+	// Delete the orphan HostEndpoints and WAIT — removing them lifts the
+	// applyOnForward drop that poisons cross-node traffic.
+	if out, err := c.kubectl(ctx, nil, "delete", "hostendpoints.projectcalico.org",
+		"-l", "app.kubernetes.io/managed-by!=tigera-operator",
+		"--ignore-not-found", "--wait=true", "--timeout=60s"); err != nil {
+		t.Logf("repair HEP state: delete hostendpoints: %v\n%s", err, out)
+	}
+	// The node-subnet IPPool is the other half of a HEP case's leaked state (its
+	// teardown deletes it too); reap it so a leaked pool over the node subnet
+	// can't linger. deleteOrphanClusterPolicies handles the GNP/GNS.
+	if out, err := c.kubectl(ctx, nil, "delete", "ippool", nodeSubnetPool,
+		"--ignore-not-found", "--wait=true", "--timeout=60s"); err != nil {
+		t.Logf("repair HEP state: delete node-subnet IPPool: %v\n%s", err, out)
+	}
+	// Felix needs a moment to pull the forward chains once the HEP is gone; flush
+	// conntrack so no established entry masks the change, then let it converge.
+	if nodes, err := c.nodes(ctx); err == nil {
+		names := make([]string, 0, len(nodes))
+		for n := range nodes {
+			names = append(names, n)
+		}
+		flushConntrack(ctx, c, names)
+	}
+	time.Sleep(cfg.HEPSettleDelay)
 }
 
 // nodeSubnetPool is the name of the temporary disabled IPPool the HEP harness
@@ -104,7 +174,7 @@ func nodeSubnetCIDR(nodeIP string) (string, error) {
 // A disabled pool is never used for IPAM, but its CIDR still counts as "inside
 // Calico" for the natOutgoing decision, so pod->node-IP keeps the real pod
 // source IP and the HEP can resolve the pod's labels. Scoped to HEP cases and
-// torn down afterwards, mirroring setFailsafes.
+// torn down afterwards.
 func nodeSubnetPoolManifest(cidr string) string {
 	return fmt.Sprintf("apiVersion: projectcalico.org/v3\nkind: IPPool\n"+
 		"metadata:\n  name: %q\nspec:\n  cidr: %q\n  disabled: true\n  natOutgoing: false\n",

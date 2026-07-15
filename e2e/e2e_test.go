@@ -24,7 +24,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,12 +39,6 @@ import (
 
 // All tunables (env-backed knobs and the timing constants) live on the package's
 // Config; see config.go. The harness reads them through the package-level cfg.
-
-// internetIPs are live public anycast resolvers (Cloudflare primary/secondary,
-// Google primary/secondary), all of which answer ICMP echo. A realInternet
-// endpoint resolves to one of these at random each run, so the internet test
-// exercises a real off-cluster address without hard-depending on one operator.
-var internetIPs = []string{"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4"}
 
 // TestE2E runs every applicable e2e/testdata case and fails if any assertion is
 // wrong. By default it compares the engine against the live cluster's dataplane;
@@ -396,6 +389,18 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		}
 	}
 
+	// Clean the cluster baseline BEFORE gating on health. Cluster-scoped policy
+	// objects (GlobalNetworkPolicy/Set, HostEndpoint) outlive namespace deletion,
+	// so a leftover from a prior run keeps applying to this case. This MUST run
+	// before ensureClusterHealthy: a HostEndpoint an interrupted run leaked can
+	// degrade Calico itself, and the health gate's calico-node restart can't
+	// recover while the leak is still applied — so remove the leak first, then
+	// gate on health.
+	if out, err := c.deleteOrphanClusterPolicies(ctx); err != nil {
+		t.Logf("pre-clean delete orphan cluster policies: %v\n%s", err, out)
+	}
+	repairLeakedHEPState(ctx, t, c)
+
 	// Gate the scenario on a recovered control plane. A preceding HostEndpoint
 	// case narrows Calico's failsafes cluster-wide and flushes conntrack on the
 	// nodes; if its teardown returned while Felix was still reprogramming (or a
@@ -461,14 +466,6 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 				t.Fatalf("pre-clean delete orphan ns %s: %v", ns, err)
 			}
 		}
-	}
-	// Cluster-scoped policy objects (GlobalNetworkPolicy/Set, HostEndpoint) outlive
-	// namespace deletion, so a leftover from a prior run keeps applying to this case
-	// — a default-tier deny-all from another case, for instance, silently denies
-	// traffic the engine predicts as allowed. Clear non-operator leftovers before
-	// applying this case's own policy.
-	if out, err := c.deleteOrphanClusterPolicies(ctx); err != nil {
-		t.Logf("pre-clean delete orphan cluster policies: %v\n%s", err, out)
 	}
 	for ns, labels := range nsLabels {
 		ensure(ns, labels)
@@ -554,7 +551,10 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	// the IP feeds the rewriter below so the engine evaluates the same real source.
 	extContainer := map[string]string{} // endpoint ID -> container name
 	extIP := map[string]string{}        // endpoint ID -> observer IP on the kind net
-	if len(externalEP) > 0 {
+	// externalEP endpoints are probe *sources* (docker exec connect); realEP
+	// endpoints are internet *destinations* a cluster pod reaches on the same
+	// network. Both are off-cluster containers, so both are realized here.
+	if len(externalEP) > 0 || len(realEP) > 0 {
 		anyNode := ""
 		for n := range nodeSet {
 			if anyNode == "" || n < anyNode {
@@ -566,7 +566,7 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			t.Fatalf("discover kind network: %v", err)
 		}
 		for _, ep := range req.Endpoints {
-			if externalEP[ep.ID] {
+			if externalEP[ep.ID] || realEP[ep.ID] {
 				extContainer[ep.ID] = "telepathy-ext-" + sanitizeName(ep.ID)
 			}
 		}
@@ -581,15 +581,15 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			}
 		})
 		for _, ep := range req.Endpoints {
-			if !externalEP[ep.ID] {
+			if !externalEP[ep.ID] && !realEP[ep.ID] {
 				continue
 			}
-			ip, err := c.startObserver(ctx, extContainer[ep.ID], network, agnhostImg)
+			ip, err := c.startObserver(ctx, extContainer[ep.ID], network, agnhostImg, plan)
 			if err != nil {
-				t.Fatalf("start external observer for %s: %v", ep.ID, err)
+				t.Fatalf("start off-cluster observer for %s: %v", ep.ID, err)
 			}
 			extIP[ep.ID] = ip
-			t.Logf("external observer %s -> container %s @ %s (network %s)", ep.ID, extContainer[ep.ID], ip, network)
+			t.Logf("off-cluster observer %s -> container %s @ %s (network %s)", ep.ID, extContainer[ep.ID], ip, network)
 		}
 	}
 
@@ -610,18 +610,12 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	t.Cleanup(func() {
 		cctx := context.Background()
 		// E2E_KEEP: freeze a failed case's scene for live inspection. We skip the
-		// whole teardown — including the failsafe restore for HEP cases — so what
-		// kubectl shows is exactly what the probe saw. The narrowed failsafes keep
-		// apiserver/etcd/kubelet open, so the cluster stays reachable; the message
-		// says how to undo it. Only on failure: green cases always clean up.
+		// whole teardown so what kubectl shows is exactly what the probe saw. The
+		// narrowed failsafes keep apiserver/etcd/kubelet open, so the cluster stays
+		// reachable. Only on failure: green cases always clean up.
 		if cfg.KeepOnFailure && t.Failed() {
-			msg := fmt.Sprintf("E2E_KEEP=1: leaving case %q in place for inspection (namespaces: %s); "+
+			t.Logf("E2E_KEEP=1: leaving case %q in place for inspection (namespaces: %s); "+
 				"clean up with hacks/provision/calico-down.sh", name, strings.Join(sortedKeys(createdNS), ", "))
-			if len(hepNodes) > 0 {
-				msg += " (NOTE: this HEP case left Calico failsafes narrowed cluster-wide; " +
-					"restore them by re-running teardown or `hacks/provision/calico-down.sh`)"
-			}
-			t.Log(msg)
 			return
 		}
 		// Policy teardown is two passes because Calico rejects deleting a
@@ -632,7 +626,12 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		// ignored. Pass 2 deletes the now-empty tier. We only ever delete the
 		// case manifest's own objects, so the built-in tiers (default,
 		// kube-admin, kube-baseline) — which can't be deleted by design — are
-		// never touched. Then HEPs, restore failsafes, then netsets.
+		// never touched. Then HEPs, then netsets. Failsafes are deliberately NOT
+		// restored: narrowing is idempotent and inert on nodes with no
+		// HostEndpoint, and toggling FailsafeHostPorts forces a full Felix restart
+		// on every node (Calico requires it) — the restart briefly severs
+		// calico-node↔apiserver, leaving pods scheduled meanwhile stuck in
+		// ContainerCreating and poisoning the next case. Narrow once, leave it.
 		if appliedPolicy != "" {
 			_, _ = c.kubectl(cctx, []byte(appliedPolicy), "delete", "--ignore-not-found", "-f", "-")
 			if out, err := c.deleteManifest(cctx, appliedPolicy); err != nil {
@@ -643,9 +642,6 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			_, _ = c.deleteManifest(cctx, appliedHEP)
 		}
 		if len(hepNodes) > 0 {
-			if err := setFailsafes(cctx, c, false); err != nil {
-				t.Logf("teardown restore failsafes: %v", err)
-			}
 			flushConntrack(cctx, c, hepNodes)
 		}
 		if appliedNodePool != "" {
@@ -754,18 +750,31 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		}
 	}
 
+	// Pod-Ready means Running, not "agnhost is accepting connections" (no
+	// readinessProbe — see manifest.go / waitServerListening). Poll each workload
+	// pod's server over loopback so probes never race netexec's bind. Off-cluster
+	// containers are polled in startObserver.
+	for _, ep := range req.Endpoints {
+		if externalEP[ep.ID] || realEP[ep.ID] {
+			continue
+		}
+		if name := podNameByID[ep.ID]; name != "" {
+			if err := c.waitServerListening(ctx, ep.Namespace, name, plan.tcp[0]); err != nil {
+				t.Fatalf("wait server listening %s/%s: %v", ep.Namespace, name, err)
+			}
+		}
+	}
+
 	podIPByID := map[string]string{}
 	for _, ep := range req.Endpoints {
 		if realEP[ep.ID] {
-			// Real off-cluster destination: its "real IP" is a live public anycast
-			// address chosen per-run, never a pod. buildIPRewriter then remaps the
-			// endpoint's fictional IP — and any policy CIDR containing it (e.g.
-			// 1.1.1.0/24 -> <chosen>/32) — exactly like it does for pods, so the
-			// applied policy matches the chosen address on the wire and the probe
-			// pings it out through the node's NAT.
-			ip := internetIPs[rand.Intn(len(internetIPs))]
-			podIPByID[ep.ID] = ip
-			t.Logf("realInternet: %s resolves to %s this run", ep.ID, ip)
+			// Off-cluster internet destination: an agnhost container on the kind
+			// network (started above), reached at its container IP. buildIPRewriter
+			// remaps the endpoint's fictional IP — and any policy CIDR containing it
+			// — to that IP, exactly like a pod, so the applied policy matches the
+			// address on the wire and the pod's probe leaves through the node's NAT
+			// to reach it. Deterministic, unlike a real public IP over CI egress.
+			podIPByID[ep.ID] = extIP[ep.ID]
 			continue
 		}
 		if externalEP[ep.ID] {
@@ -781,37 +790,6 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			t.Fatalf("pod IP for %s: %v", ep.ID, err)
 		}
 		podIPByID[ep.ID] = ip
-	}
-	// realInternet baseline: ping each real address from one of this case's own
-	// pods BEFORE the policy lands (pods are Ready here, policy applies in
-	// phase 4, so all egress is still open). This exercises the exact path the
-	// assertions use — pod, node NAT, internet — with the Linux agnhost image's
-	// bundled ping (kind node containers ship no ping binary, so probing from
-	// the node would false-negative). A cluster with no internet egress would
-	// misreport every expect=allow internet flow as a policy DIFF; instead
-	// those flows are quarantined below with this reason.
-	internetDown := map[string]bool{}
-	if len(realEP) > 0 {
-		var blNS, blPod string
-		for _, ep := range req.Endpoints {
-			if podNameByID[ep.ID] != "" && osByID[ep.ID] == "linux" {
-				blNS, blPod = ep.Namespace, podNameByID[ep.ID]
-				break
-			}
-		}
-		if blPod == "" {
-			t.Fatalf("realInternet: no Linux pod available to baseline internet reachability")
-		}
-		for _, ep := range req.Endpoints {
-			if !realEP[ep.ID] {
-				continue
-			}
-			if ok, out, err := pingOnce(ctx, c, blNS, blPod, podIPByID[ep.ID]); !ok {
-				internetDown[ep.ID] = true
-				t.Logf("realInternet: %s (%s) unreachable from pod %s/%s pre-policy — quarantining its flows: %v\n%s",
-					ep.ID, podIPByID[ep.ID], blNS, blPod, err, strings.TrimSpace(out))
-			}
-		}
 	}
 
 	nodeIP := map[string]string{}
@@ -897,7 +875,7 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	}
 
 	if len(req.HostEndpoints) > 0 {
-		if err := setFailsafes(ctx, c, true); err != nil {
+		if err := narrowFailsafes(ctx, c); err != nil {
 			t.Fatalf("%v", err)
 		}
 		// Stop natOutgoing from SNATing pod->node-IP traffic, which would hide a
@@ -989,15 +967,10 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			rw.quarantined = reason
 			return rw
 		}
-		// realInternet flows the environment can't reproduce: an offline cluster
-		// can't demonstrate an allow to a real address (recorded, not scored),
-		// and a real address can't originate probes at all.
-		if internetDown[a.To] {
-			rw.quarantined = "no internet egress from cluster (baseline ping failed)"
-			return rw
-		}
+		// An internet destination is a listening container, reached from a pod —
+		// it never originates probes.
 		if realEP[a.From] {
-			rw.probeErr = "realInternet endpoint is destination-only (nothing to probe from)"
+			rw.probeErr = "internet endpoint is destination-only (nothing to probe from)"
 			return rw
 		}
 
@@ -1064,6 +1037,18 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	}
 
 	t.Log("\n" + rep.render())
+	// When E2E_REPORT is set, append the same per-case table to that file so CI
+	// can attach the full sweep as a release artifact. Subtests run sequentially
+	// (see TestE2E), so the append is race-free; a write error only warns.
+	if f := os.Getenv("E2E_REPORT"); f != "" {
+		fh, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Logf("E2E_REPORT: %v", err)
+		} else {
+			fmt.Fprintln(fh, rep.render())
+			fh.Close()
+		}
+	}
 	if n := rep.mismatches(); n > 0 {
 		t.Errorf("%d/%d assertions: engine disagrees with the cluster (or probe errored)", n, len(assertions))
 	}
@@ -1092,12 +1077,30 @@ func ensureClusterHealthy(ctx context.Context, t *testing.T, c *cluster, provide
 	if _, err := c.waitTigeraAvailable(ctx, cfg.HealthGrace); err == nil {
 		return // common path: components already Available, returns near-instantly
 	}
-	t.Logf("Calico not Available within %s — rolling calico-node and rechecking", cfg.HealthGrace)
+	t.Logf("Calico not Available within %s — recovering (roll dataplane + control plane, reap leaks)", cfg.HealthGrace)
+	// Dataplane first: one node at a time, keeps Typha/apiserver untouched.
 	if out, err := c.restartCalicoNode(ctx, cfg.HealthRestartTimeout); err != nil {
 		// A rollout that doesn't converge is logged but not fatal here: the
 		// recheck below is the real gate on whether the cluster is usable.
 		t.Logf("calico-node restart did not fully converge: %v\n%s", err, out)
 	}
+	// Then the Calico control plane. A HEP case can strand calico-apiserver /
+	// kube-controllers on a worker whose apiserver path it disrupted, taking the
+	// aggregated API (GNP/HEP/IPPool) down — after which nothing can delete the
+	// leaked objects that keep it down. Rolling reschedules them so the API
+	// answers again.
+	if out, err := c.restartCalicoControlPlane(ctx, cfg.HealthRestartTimeout); err != nil {
+		t.Logf("calico control-plane restart did not fully converge: %v\n%s", err, out)
+	}
+	// With the API answering again, reap any HEP/policy/pool an interrupted or
+	// wedged prior case leaked — the leak is often what keeps tigerastatus
+	// degraded, and the earlier best-effort repair couldn't run while the API was
+	// down. deleteOrphanClusterPolicies handles the GNP/GNS/HEP objects;
+	// repairLeakedHEPState synchronously clears HEPs + the node-subnet pool.
+	if out, err := c.deleteOrphanClusterPolicies(ctx); err != nil {
+		t.Logf("recovery: delete orphan cluster policies: %v\n%s", err, out)
+	}
+	repairLeakedHEPState(ctx, t, c)
 	if out, err := c.waitTigeraAvailable(ctx, cfg.HealthRestartTimeout); err != nil {
 		t.Fatalf("cluster still unhealthy after Calico restart (tigerastatus not Available) — "+
 			"refusing to run case on a broken control plane: %v\n%s", err, out)

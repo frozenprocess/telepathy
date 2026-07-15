@@ -165,6 +165,31 @@ func (c *cluster) waitPodsReady(ctx context.Context, ns string, timeout time.Dur
 		fmt.Sprintf("--timeout=%ds", int(timeout.Seconds())))
 }
 
+// waitServerListening polls until agnhost inside the pod accepts a TCP
+// connection on port, checked over LOOPBACK via `kubectl exec` — so it never
+// depends on cross-node routing. Pod-Ready only means the container is Running
+// (agnhost carries no readinessProbe: a kubelet TCP probe dials the pod IP, and
+// the control-plane node's kubelet can't route to pod IPs in kind+Calico, so it
+// hangs 0/1 there). Without this, a probe can race netexec's bind and an allow
+// flow reads as a false deny. Returns nil once serving, or an error after ~15s.
+func (c *cluster) waitServerListening(ctx context.Context, ns, pod string, port int) error {
+	target := fmt.Sprintf("127.0.0.1:%d", port)
+	var last string
+	for i := 0; i < 30; i++ {
+		out, err := c.exec(ctx, ns, pod, "agnhost", "/agnhost", "connect", target, "--timeout=1s")
+		if err == nil {
+			return nil
+		}
+		last = out
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("agnhost not serving on %s after 15s: %s", target, strings.TrimSpace(last))
+}
+
 // calicoSystemNS is the namespace the Tigera operator installs Calico into.
 const calicoSystemNS = "calico-system"
 
@@ -202,6 +227,29 @@ func (c *cluster) restartCalicoNode(ctx context.Context, timeout time.Duration) 
 		return out, cmdErr("rollout status daemonset/calico-node", out, err)
 	}
 	return out, nil
+}
+
+// restartCalicoControlPlane rolls the Calico *control-plane* Deployments
+// (calico-apiserver, calico-kube-controllers) and waits for each to finish. A
+// HEP case can strand these pods on a worker node whose apiserver-ClusterIP path
+// it disrupts; when both apiserver replicas land there, the Calico aggregated API
+// (GlobalNetworkPolicy/HostEndpoint/IPPool) goes down — and once it's down,
+// nothing can delete the leaked objects that keep it down (delete needs that
+// API). Rolling reschedules them so the API answers again. Sequential, and only
+// invoked from the unhealthy recovery path — NOT alongside a calico-node roll:
+// these Deployments talk to the k8s apiserver, not Typha, so rolling them alone
+// doesn't trigger the Typha relist storm restartCalicoNode guards against.
+func (c *cluster) restartCalicoControlPlane(ctx context.Context, timeout time.Duration) (string, error) {
+	for _, deploy := range []string{"deployment/calico-apiserver", "deployment/calico-kube-controllers"} {
+		if out, err := c.kubectl(ctx, nil, "-n", calicoSystemNS, "rollout", "restart", deploy); err != nil {
+			return out, cmdErr("rollout restart "+deploy, out, err)
+		}
+		if out, err := c.kubectl(ctx, nil, "-n", calicoSystemNS, "rollout", "status", deploy,
+			fmt.Sprintf("--timeout=%ds", int(timeout.Seconds()))); err != nil {
+			return out, cmdErr("rollout status "+deploy, out, err)
+		}
+	}
+	return "", nil
 }
 
 // podIP returns a pod's primary IP (empty until it has one).
@@ -332,17 +380,36 @@ func (c *cluster) nodeNetwork(ctx context.Context, node string) (string, error) 
 	return "", fmt.Errorf("node %s has no docker network", node)
 }
 
-// startObserver launches a detached agnhost container on the given network to
-// serve as an off-cluster probe source, and returns its IP on that network.
-// agnhost's `pause` keeps it alive; probes run via `docker exec … /agnhost
-// connect`. A pre-existing container of the same name is removed first so a
-// crashed prior run can't wedge the launch.
-func (c *cluster) startObserver(ctx context.Context, name, network, image string) (string, error) {
+// startObserver launches a detached agnhost container on the given network and
+// returns its IP on that network. It runs netexec serving the case's ports (the
+// same server the cluster pods run), so the container works both as an
+// off-cluster probe *source* (`docker exec … /agnhost connect`) and as an
+// off-cluster *destination* a cluster pod can reach — the deterministic,
+// same-network stand-in for a real internet address (no ICMP-to-public-IP
+// dependency). It then polls until netexec is accepting connections, so a probe
+// never races the server's startup. A pre-existing container of the same name is
+// removed first so a crashed prior run can't wedge the launch.
+func (c *cluster) startObserver(ctx context.Context, name, network, image string, plan serverPlan) (string, error) {
 	_, _ = c.docker(ctx, "rm", "-f", name)
-	if out, err := c.docker(ctx, "run", "-d", "--name", name, "--network", network,
-		"--entrypoint", "/agnhost", image, "pause"); err != nil {
+
+	// Serve every port the pods serve. One netexec process per (tcp,udp[,sctp])
+	// group (see netexecProcs); multiple procs are backgrounded under sh.
+	procs := netexecProcs(plan)
+	run := []string{"run", "-d", "--name", name, "--network", network}
+	if len(procs) == 1 {
+		run = append(run, "--entrypoint", procs[0][0], image)
+		run = append(run, procs[0][1:]...)
+	} else {
+		parts := make([]string, len(procs))
+		for i, p := range procs {
+			parts[i] = strings.Join(p, " ") + " &"
+		}
+		run = append(run, "--entrypoint", "sh", image, "-c", strings.Join(parts, " ")+" wait")
+	}
+	if out, err := c.docker(ctx, run...); err != nil {
 		return "", cmdErr(fmt.Sprintf("run observer %s", name), out, err)
 	}
+
 	ip, err := c.docker(ctx, "inspect", "-f",
 		fmt.Sprintf("{{(index .NetworkSettings.Networks %q).IPAddress}}", network), name)
 	if err != nil {
@@ -351,7 +418,25 @@ func (c *cluster) startObserver(ctx context.Context, name, network, image string
 	if ip = strings.TrimSpace(ip); ip == "" {
 		return "", fmt.Errorf("observer %s has no IP on network %s", name, network)
 	}
-	return ip, nil
+
+	// Wait for netexec to bind, mirroring the pods' readinessProbe. Probe the
+	// primary TCP port from inside the container (loopback), so this checks the
+	// server is up without depending on cross-network routing.
+	target := fmt.Sprintf("127.0.0.1:%d", plan.tcp[0])
+	var lastOut string
+	for i := 0; i < 30; i++ {
+		out, execErr := c.docker(ctx, "exec", name, "/agnhost", "connect", target, "--timeout=1s")
+		if execErr == nil {
+			return ip, nil
+		}
+		lastOut = out
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	return "", fmt.Errorf("observer %s netexec not serving on %s after 15s: %s", name, target, strings.TrimSpace(lastOut))
 }
 
 // removeObserver force-removes an observer container (best effort).

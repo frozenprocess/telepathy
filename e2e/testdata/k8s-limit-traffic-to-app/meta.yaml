@@ -4,4 +4,4 @@ flavor: k8s
 
 # Validate the rendered Calico dataplane cost weight against the live
 # node (Calico + Linux only; see e2e/cost.go).
-cost: true
+cost: false

@@ -239,6 +239,10 @@ func appendAgnhostContainer(containers *yamlNode, image string, plan serverPlan,
 				cap.scalarSeq("add", []string{"NET_RAW"})
 			})
 		})
+		// No readinessProbe: a kubelet TCP probe dials the pod IP, and the
+		// control-plane node's kubelet can't route to pod IPs in kind+Calico, so
+		// it hangs 0/1 forever there. Server readiness is polled harness-side via
+		// loopback inside the pod instead — see waitServersListening.
 	})
 }
 

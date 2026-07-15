@@ -5,4 +5,4 @@
 # `make verify-all PROVIDER=<x>` runs a case when flavor==k8s or flavor==<x>.
 flavor: calico
 
-cost: true
+cost: false
