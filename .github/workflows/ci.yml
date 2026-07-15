@@ -131,6 +131,7 @@ jobs:
   # (ghcr.io/<owner>/<repo>:latest) exists for consumers.
   image:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-test, e2e] # only publish a release that passed unit tests + the live e2e gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -162,6 +163,7 @@ jobs:
   # linux/<arch> only — no macOS/Windows.
   binaries:
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-test, e2e] # only publish a release that passed unit tests + the live e2e gate
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release + upload assets
