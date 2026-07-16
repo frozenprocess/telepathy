@@ -1084,6 +1084,23 @@ func ensureClusterHealthy(ctx context.Context, t *testing.T, c *cluster, provide
 		// recheck below is the real gate on whether the cluster is usable.
 		t.Logf("calico-node restart did not fully converge: %v\n%s", err, out)
 	}
+	// Break the conntrack deadlock BEFORE touching the control plane. A HEP
+	// case's applyOnForward default-deny drops calico-apiserver↔kube-apiserver
+	// flows during its convergence window, leaving INVALID conntrack entries that
+	// survive pod restarts and keep being dropped — so a fresh calico-apiserver
+	// replica still can't reach kube-apiserver and the rollout below never
+	// converges. repairLeakedHEPState also flushes, but only when it detects a
+	// leaked HostEndpoint; teardown usually deletes the HEP fine and leaves only
+	// the conntrack poison, so that path returns early and never flushes. Flush
+	// unconditionally here, on every node, so the restarted control plane starts
+	// on clean conntrack.
+	if nodes, err := c.nodes(ctx); err == nil {
+		names := make([]string, 0, len(nodes))
+		for n := range nodes {
+			names = append(names, n)
+		}
+		flushConntrack(ctx, c, names)
+	}
 	// Then the Calico control plane. A HEP case can strand calico-apiserver /
 	// kube-controllers on a worker whose apiserver path it disrupted, taking the
 	// aggregated API (GNP/HEP/IPPool) down — after which nothing can delete the
