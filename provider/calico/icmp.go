@@ -26,14 +26,8 @@ import (
 // against. nil means "no ICMP filtering"; that's the default for backward
 // compatibility with callers that never set Request.ICMPType/.ICMPCode.
 type icmpProbe struct {
-	// protocol is the probe's IP protocol number. We only filter when this
-	// is 1 (ICMP) or 58 (ICMPv6); rules with icmp/notICMP matchers under any
-	// other probe protocol are dropped by matchL4Protocol upstream (the rule
-	// would also have to declare protocol: ICMP for the matcher to be valid)
-	// so we can leave them alone here.
-	protocol int
-	typ      *int
-	code     *int
+	typ  *int
+	code *int
 }
 
 // newICMPProbe returns nil when the Request does not enable ICMP filtering:
@@ -44,17 +38,14 @@ func newICMPProbe(req Request) *icmpProbe {
 	if req.ICMPType == nil && req.ICMPCode == nil {
 		return nil
 	}
-	return &icmpProbe{
-		protocol: protocolNumber(req.Protocol),
-		typ:      req.ICMPType,
-		code:     req.ICMPCode,
-	}
+	return &icmpProbe{typ: req.ICMPType, code: req.ICMPCode}
 }
 
-// active reports whether the probe should filter at all. Centralises the
-// "nil probe OR no fields set" check so callers don't repeat it.
+// active reports whether the probe should filter at all. newICMPProbe only
+// returns a non-nil probe when at least one of type/code is set, so a
+// non-nil probe is always active.
 func (p *icmpProbe) active() bool {
-	return p != nil && (p.typ != nil || p.code != nil)
+	return p != nil
 }
 
 // applyICMPFilter rewrites a v3 (Staged){Global}NetworkPolicy's rule lists in

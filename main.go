@@ -567,12 +567,90 @@ func formatBPF(resp calico.BPFResponse) string {
 		if p.Error != "" {
 			fmt.Fprintf(&b, "# ERROR: %s\n", p.Error)
 		}
-		for _, line := range p.Lines {
-			b.WriteString(line)
-			b.WriteByte('\n')
+		if len(p.Lines) > 0 {
+			for _, line := range p.Lines {
+				b.WriteString(line)
+				b.WriteByte('\n')
+			}
+			continue
 		}
+		writeBPFTree(&b, p.Tiers, p.Profiles)
 	}
 	return b.String()
+}
+
+// writeBPFTree renders the concise (non-verbose) Tiers/Profiles tree as
+// indented text, mirroring the shape `calico-node bpf policy dump` prints —
+// the -json flag is the way to get at the structured data itself.
+func writeBPFTree(b *strings.Builder, tiers []calico.BPFTier, profiles []calico.BPFProfile) {
+	for _, t := range tiers {
+		fmt.Fprintf(b, "Tier: %s\n", t.Name)
+		for _, pol := range t.Policies {
+			name := pol.Name
+			if pol.Namespace != "" {
+				name = pol.Namespace + "/" + name
+			}
+			fmt.Fprintf(b, "  Policy: %s %s\n", pol.Kind, name)
+			writeBPFRules(b, pol.Rules, "    ")
+		}
+		if t.DefaultAction != "" {
+			fmt.Fprintf(b, "  End Tier: %s  (action: %s)\n", t.Name, t.DefaultAction)
+		}
+	}
+	for _, prof := range profiles {
+		fmt.Fprintf(b, "Profile: %s\n", prof.Name)
+		writeBPFRules(b, prof.Rules, "  ")
+	}
+}
+
+func writeBPFRules(b *strings.Builder, rls []calico.BPFRule, indent string) {
+	for _, r := range rls {
+		fmt.Fprintf(b, "%sRule: Action: %s", indent, r.Action)
+		if r.Protocol != "" {
+			fmt.Fprintf(b, "  Protocol: %s", r.Protocol)
+		}
+		if r.NotProtocol != "" {
+			fmt.Fprintf(b, "  NotProtocol: %s", r.NotProtocol)
+		}
+		b.WriteByte('\n')
+		writeBPFEntity(b, indent+"  ", "Source", r.Source)
+		writeBPFEntity(b, indent+"  ", "Destination", r.Destination)
+	}
+}
+
+// writeBPFEntity prints one rule leg's match criteria — nets/ports/named ports
+// and each IP set already resolved to its members — or nothing when the leg is
+// nil (no L3/L4 criteria).
+func writeBPFEntity(b *strings.Builder, indent, label string, e *calico.BPFEntity) {
+	if e == nil {
+		return
+	}
+	fmt.Fprintf(b, "%s%s:", indent, label)
+	if len(e.Nets) > 0 {
+		fmt.Fprintf(b, " nets=%v", e.Nets)
+	}
+	if len(e.NotNets) > 0 {
+		fmt.Fprintf(b, " !nets=%v", e.NotNets)
+	}
+	for _, s := range e.IPSets {
+		fmt.Fprintf(b, " ipSet(%s)=%v", s.ID, s.Members)
+	}
+	for _, s := range e.NotIPSets {
+		fmt.Fprintf(b, " !ipSet(%s)=%v", s.ID, s.Members)
+	}
+	if len(e.Ports) > 0 {
+		fmt.Fprintf(b, " ports=%v", e.Ports)
+	}
+	if len(e.NotPorts) > 0 {
+		fmt.Fprintf(b, " !ports=%v", e.NotPorts)
+	}
+	if len(e.NamedPorts) > 0 {
+		fmt.Fprintf(b, " namedPorts=%v", e.NamedPorts)
+	}
+	if len(e.NotNamedPorts) > 0 {
+		fmt.Fprintf(b, " !namedPorts=%v", e.NotNamedPorts)
+	}
+	b.WriteByte('\n')
 }
 
 // runHNS implements `telepathy hns`: read the same JSON Request from

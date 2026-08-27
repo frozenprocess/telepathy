@@ -26,24 +26,18 @@ import (
 	"github.com/projectcalico/calico/felix/rules"
 )
 
-// flow implements checker.Flow for an L3/L4(/L7) pod-to-pod probe.
-//
-// Pre-extension this struct held only L3/L4. We now also carry HTTP method/
-// path and the source/dest peer's SPIFFE principal so the checker's L7 and
-// service-account-match paths exercise. Fields stay un-set (nil/empty) when
-// the caller hasn't asked for them; the checker treats nil HTTP/principal as
-// "don't constrain", matching what a real Dikastes evaluator does for an
-// L3/L4-only flow.
+// flow implements checker.Flow for an L3/L4(/L7) pod-to-pod probe. It carries
+// L3/L4 plus HTTP method/path; the checker treats nil HTTP as "don't
+// constrain", matching what a real Dikastes evaluator does for an L3/L4-only
+// flow. The principal/labels accessors the interface requires return nil — we
+// don't drive the checker's SPIFFE/service-account-match paths through this
+// struct.
 type flow struct {
 	srcIP, dstIP     net.IP
 	srcPort, dstPort int
 	protocol         int
 	httpMethod       *string
 	httpPath         *string
-	srcPrincipal     *string
-	dstPrincipal     *string
-	srcLabels        map[string]string
-	dstLabels        map[string]string
 }
 
 func (f *flow) GetSourceIP() net.IP                { return f.srcIP }
@@ -53,10 +47,10 @@ func (f *flow) GetDestPort() int                   { return f.dstPort }
 func (f *flow) GetProtocol() int                   { return f.protocol }
 func (f *flow) GetHttpMethod() *string             { return f.httpMethod }
 func (f *flow) GetHttpPath() *string               { return f.httpPath }
-func (f *flow) GetSourcePrincipal() *string        { return f.srcPrincipal }
-func (f *flow) GetDestPrincipal() *string          { return f.dstPrincipal }
-func (f *flow) GetSourceLabels() map[string]string { return f.srcLabels }
-func (f *flow) GetDestLabels() map[string]string   { return f.dstLabels }
+func (f *flow) GetSourcePrincipal() *string        { return nil }
+func (f *flow) GetDestPrincipal() *string          { return nil }
+func (f *flow) GetSourceLabels() map[string]string { return nil }
+func (f *flow) GetDestLabels() map[string]string   { return nil }
 
 func floatPtr(f float64) *float64 { return &f }
 
@@ -97,21 +91,6 @@ func protocolHasL4Ports(p int) bool {
 		return true
 	}
 	return false
-}
-
-// spiffePrincipal builds the SPIFFE-style URI Calico's app-policy/checker
-// uses to identify a workload by service account, of the form
-//
-//	spiffe://cluster.local/ns/<namespace>/sa/<serviceAccount>
-//
-// Returns nil when either component is empty so the checker treats the
-// peer as "unidentified" rather than matching a bogus SA.
-func spiffePrincipal(namespace, serviceAccount string) *string {
-	if namespace == "" || serviceAccount == "" {
-		return nil
-	}
-	s := "spiffe://cluster.local/ns/" + namespace + "/sa/" + serviceAccount
-	return &s
 }
 
 func strPtr(s string) *string {

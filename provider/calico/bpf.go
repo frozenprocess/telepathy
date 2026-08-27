@@ -41,8 +41,6 @@ package calico
 import (
 	"fmt"
 	"hash/fnv"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/projectcalico/calico/app-policy/policystore"
@@ -73,29 +71,95 @@ type BPFOptions struct {
 	Directions []string
 	// IPVersions to render (4 and/or 6). Empty infers from endpoint IPs.
 	IPVersions []int
-	// Verbose, when true, emits the full annotated eBPF disassembly (one line
-	// per instruction, plus labels and per-match comments) — the same artifact
-	// `calico-node bpf policy dump --asm` prints. When false (default), Lines
-	// holds the concise tier→policy→rule tree that `calico-node bpf policy
-	// dump` prints without --asm.
+	// Verbose, when true, emits the full annotated eBPF disassembly
 	Verbose bool
 }
 
-// BPFProgram is the rendered policy program for one (endpoint, direction,
-// ipVersion). Lines is, by default, the concise tier→policy→rule tree (the
-// `calico-node bpf policy dump` view); with BPFOptions.Verbose it is the full
-// annotated disassembly: jump labels, per-rule/tier comments, and one line per
-// BPF instruction (the `--asm` view). SubPrograms is >1 when polprog had to
-// split the program across trampoline boundaries (large policies).
+// BPFProgram changes in new version
 type BPFProgram struct {
-	Endpoint     string   `json:"endpoint"`
-	Interface    string   `json:"interface"`
-	Direction    string   `json:"direction"`
-	IPVersion    int      `json:"ipVersion"`
-	SubPrograms  int      `json:"subPrograms"`
-	Instructions int      `json:"instructions,omitempty"` // total eBPF instructions across sub-programs
-	Lines        []string `json:"lines"`
-	Error        string   `json:"error,omitempty"`
+	Endpoint     string       `json:"endpoint"`
+	Interface    string       `json:"interface"`
+	Direction    string       `json:"direction"`
+	IPVersion    int          `json:"ipVersion"`
+	SubPrograms  int          `json:"subPrograms,omitempty"`
+	Instructions int          `json:"instructions,omitempty"`
+	Tiers        []BPFTier    `json:"tiers,omitempty"`
+	Profiles     []BPFProfile `json:"profiles,omitempty"`
+	Lines        []string     `json:"lines,omitempty"`
+	Error        string       `json:"error,omitempty"`
+}
+
+// BPFTier is one policy tier
+type BPFTier struct {
+	Name          string      `json:"name"`
+	DefaultAction string      `json:"defaultAction,omitempty"`
+	Policies      []BPFPolicy `json:"policies,omitempty"`
+}
+
+// BPFPolicy is one policy within a tier (Kind distinguishes GlobalNetworkPolicy
+// / NetworkPolicy / etc.; Namespace is empty for cluster-scoped kinds).
+type BPFPolicy struct {
+	Kind      string    `json:"kind,omitempty"`
+	Namespace string    `json:"namespace,omitempty"`
+	Name      string    `json:"name"`
+	Rules     []BPFRule `json:"rules,omitempty"`
+}
+
+// BPFProfile is a workload's default profile, evaluated after every tier falls
+// through to pass. Calico profiles carry no tier/kind, just a name and rules.
+type BPFProfile struct {
+	Name  string    `json:"name"`
+	Rules []BPFRule `json:"rules,omitempty"`
+}
+
+type BPFRule struct {
+	Action      string     `json:"action"`
+	MatchID     uint64     `json:"matchID"`
+	Protocol    string     `json:"protocol,omitempty"`
+	NotProtocol string     `json:"notProtocol,omitempty"`
+	Source      *BPFEntity `json:"source,omitempty"`
+	Destination *BPFEntity `json:"destination,omitempty"`
+	ICMP        *BPFICMP   `json:"icmp,omitempty"`
+	NotICMP     *BPFICMP   `json:"notICMP,omitempty"`
+}
+
+type BPFEntity struct {
+	Nets          []string       `json:"nets,omitempty"`
+	NotNets       []string       `json:"notNets,omitempty"`
+	IPSets        []BPFIPSet     `json:"ipSets,omitempty"`
+	NotIPSets     []BPFIPSet     `json:"notIPSets,omitempty"`
+	Ports         []BPFPortRange `json:"ports,omitempty"`
+	NotPorts      []BPFPortRange `json:"notPorts,omitempty"`
+	NamedPorts    []string       `json:"namedPorts,omitempty"`
+	NotNamedPorts []string       `json:"notNamedPorts,omitempty"`
+}
+
+// isEmpty reports whether this leg carries no L3/L4 criteria at all, so
+// bpfEntity can return nil instead of an empty object for JSON.
+func (e *BPFEntity) isEmpty() bool {
+	return e == nil || (len(e.Nets) == 0 && len(e.NotNets) == 0 &&
+		len(e.IPSets) == 0 && len(e.NotIPSets) == 0 &&
+		len(e.Ports) == 0 && len(e.NotPorts) == 0 &&
+		len(e.NamedPorts) == 0 && len(e.NotNamedPorts) == 0)
+}
+
+// BPFIPSet pairs a selector's IP-set ID with the members the calc graph
+// resolved it to (empty if the request captured none).
+type BPFIPSet struct {
+	ID      string   `json:"id"`
+	Members []string `json:"members,omitempty"`
+}
+
+// BPFPortRange is a single port or a range (First==Last for a single port).
+type BPFPortRange struct {
+	First int32 `json:"first"`
+	Last  int32 `json:"last"`
+}
+
+// BPFICMP is an ICMP match: a type, plus a code when the rule pins one.
+type BPFICMP struct {
+	Type int32  `json:"type"`
+	Code *int32 `json:"code,omitempty"`
 }
 
 // BPFResponse is the rendered programs plus feed-time warnings/errors.
@@ -140,13 +204,20 @@ func RenderBPF(req Request, opts BPFOptions) BPFResponse {
 					Direction: dir,
 					IPVersion: ipv,
 				}
-				lines, subs, insns, err := renderBPFProgram(rls, ipv, opts.Verbose, g.ipSetMembers)
+				// Since Cost is added we need to compile or Peacha goes purr purr purr
+				progs, err := compileBPF(rls, ipv)
 				if err != nil {
 					prog.Error = err.Error()
 				}
-				prog.Lines = lines
-				prog.SubPrograms = subs
-				prog.Instructions = insns
+				prog.SubPrograms = len(progs)
+				for _, p := range progs {
+					prog.Instructions += len(p)
+				}
+				if opts.Verbose {
+					prog.Lines = renderBPFVerbose(progs)
+				} else {
+					prog.Tiers, prog.Profiles = bpfTree(rls, g.ipSetMembers, ipv)
+				}
 				resp.Programs = append(resp.Programs, prog)
 			}
 		}
@@ -231,32 +302,15 @@ func polprogRules(tiers []*proto.TierInfo, profileIDs []string, ingress bool, st
 // allocate on first lookup, giving each set a stable, sequential synthetic ID
 // within this program. The concrete numbers differ from a live node (IP-set
 // IDs are runtime-assigned) — that's inherent to rendering without a kernel.
-//
-// byID records the reverse mapping (synthetic ID → set string ID) as the
-// compiler allocates, so renderBPFProgram can resolve the hex IDs polprog folds
-// into each rule's "Match:" summary back to the members the calc graph captured.
-type allocOnLookup struct {
-	a    *idalloc.IDAllocator
-	byID map[uint64]string
-}
+type allocOnLookup struct{ a *idalloc.IDAllocator }
 
-func (p allocOnLookup) GetNoAlloc(id string) uint64 {
-	n := p.a.GetOrAlloc(id)
-	p.byID[n] = id
-	return n
-}
+func (p allocOnLookup) GetNoAlloc(id string) uint64 { return p.a.GetOrAlloc(id) }
 
-// renderBPFProgram compiles polprog.Rules and renders the result to text.
-// Returns (lines, subProgramCount, error). PolicyDebug is enabled so each
-// instruction carries the rule/tier/policy comment that both render modes key
-// off. With verbose, Lines is the full annotated disassembly; otherwise it's
-// the concise tier→policy→rule tree. polprog uses logrus.Panic for some error
-// paths, so we recover and report per program rather than crashing the whole
-// render.
-func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[string][]string) (lines []string, subPrograms, insns int, err error) {
+// compileBPF runs "rls" rules through felix's polprog compiler.
+func compileBPF(rls polprog.Rules, ipv int) (progs []asm.Insns, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			lines, subPrograms, insns, err = nil, 0, 0, fmt.Errorf("polprog panic: %v", r)
+			progs, err = nil, fmt.Errorf("polprog panic: %v", r)
 		}
 	}()
 
@@ -267,32 +321,9 @@ func renderBPFProgram(rls polprog.Rules, ipv int, verbose bool, members map[stri
 	if ipv == 6 {
 		opts = append(opts, polprog.WithIPv6())
 	}
-	// Dummy map FDs (1..4) + an allocate-on-lookup IP-set ID provider: the
-	// compiler embeds these as constants, so no kernel/maps are needed.
-	prov := allocOnLookup{a: idalloc.New(), byID: map[uint64]string{}}
-	b := polprog.NewBuilder(prov, 1, 2, 3, 4, opts...)
-	progs, err := b.Instructions(rls)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	for _, p := range progs {
-		insns += len(p)
-	}
-
-	if verbose {
-		return renderBPFVerbose(progs), len(progs), insns, nil
-	}
-	// Map the synthetic IP-set IDs polprog folded into the Match lines back to
-	// the members the calc graph captured. A live node reads these from a kernel
-	// map; we have them in-process, so the concise render can resolve selectors
-	// to member IPs rather than showing opaque hex IDs.
-	membersByID := map[uint64][]string{}
-	for id, setID := range prov.byID {
-		if m := members[setID]; len(m) > 0 {
-			membersByID[id] = m
-		}
-	}
-	return renderBPFConcise(progs, membersByID), len(progs), insns, nil
+	// need a dummy here, or kitty scratches
+	b := polprog.NewBuilder(allocOnLookup{idalloc.New()}, 1, 2, 3, 4, opts...)
+	return b.Instructions(rls)
 }
 
 // renderBPFVerbose emits the full annotated disassembly: jump labels,
@@ -327,145 +358,158 @@ func renderBPFVerbose(progs []asm.Insns) []string {
 	return lines
 }
 
-// renderBPFConcise walks the policy-debug comments polprog attaches to each
-// instruction and prints the tier→policy→rule tree, dropping the individual
-// eBPF instructions and per-match plumbing. This mirrors `calico-node bpf
-// policy dump` (without --asm); see felix/cmd/calico-bpf/commands/policy_debug.go.
-// Rule hit counts are omitted: those come from a live BPF counters map, which a
-// static render has no equivalent of. The per-rule "Match:" summary polprog
-// emits (protocol/nets/ports/ICMP) is surfaced, with its folded IP-set hex IDs
-// resolved to the members the calc graph captured (membersByID).
-func renderBPFConcise(progs []asm.Insns, membersByID map[uint64][]string) []string {
-	var lines []string
-	depth := 0
-	inPolicy := false // inside a "Start of <Kind> …" / "End of …" policy block
-	lastProfile := "" // dedupe the synthetic Profile header (repeated per rule)
-	for _, prog := range progs {
-		for _, insn := range prog {
-			for _, c := range insn.Comments {
-				switch {
-				case strings.HasPrefix(c, "Start of tier "):
-					depth = 1
-					lines = append(lines, indent(depth)+"Tier: "+strings.TrimPrefix(c, "Start of tier "))
-				case strings.HasPrefix(c, "End of tier "):
-					lines = append(lines, indent(depth)+formatTierEnd(c))
-					depth, inPolicy = 0, false
-				case strings.HasPrefix(c, "Start of rule "):
-					// Inside a policy, rules nest under it (depth 3). Profile
-					// rules carry no enclosing "Start of <Kind>" marker; surface
-					// the owning profile name as a depth-1 header and nest the
-					// rules one level under it (depth 2) so they aren't orphaned.
-					depth = 3
-					if !inPolicy {
-						if name := ruleOwner(c); name != "" && name != lastProfile {
-							lines = append(lines, indent(1)+"Profile: "+name)
-							lastProfile = name
-						}
-						depth = 2
-					}
-					lines = append(lines, indent(depth)+formatRuleStart(c))
-				case strings.HasPrefix(c, "End of rule "):
-					if inPolicy {
-						depth = 2
-					}
-				case strings.HasPrefix(c, "Match: "):
-					lines = append(lines, indent(depth)+resolveMatch(c, membersByID))
-				case strings.HasPrefix(c, "#####"):
-					// program-split banner: verbose-only.
-				case strings.HasPrefix(c, "Start of "):
-					depth, inPolicy = 2, true
-					lines = append(lines, indent(depth)+"Policy: "+strings.TrimPrefix(c, "Start of "))
-				case strings.HasPrefix(c, "End of "):
-					lines = append(lines, indent(depth)+"End Policy: "+strings.TrimPrefix(c, "End of "))
-					depth, inPolicy = 1, false
-				default:
-					// Per-match ("If protocol == …") and "Rule MatchID" comments
-					// are verbose-only.
-				}
-			}
+// bpfTree is the new way to figure out how to create the BPF representation that doesn't suck
+func bpfTree(rls polprog.Rules, ipSetMembers map[string][]string, ipv int) (tiers []BPFTier, profiles []BPFProfile) {
+	for _, t := range rls.Tiers {
+		bt := BPFTier{Name: t.Name, Policies: make([]BPFPolicy, 0, len(t.Policies))}
+		switch t.EndAction {
+		case polprog.TierEndDeny:
+			bt.DefaultAction = "deny"
+		case polprog.TierEndPass:
+			bt.DefaultAction = "pass"
 		}
+		for _, p := range t.Policies {
+			bt.Policies = append(bt.Policies, BPFPolicy{
+				Kind:      p.Kind,
+				Namespace: p.Namespace,
+				Name:      p.Name,
+				Rules:     bpfRules(p.Rules, ipSetMembers, ipv),
+			})
+		}
+		tiers = append(tiers, bt)
 	}
-	return lines
+	for _, p := range rls.Profiles {
+		profiles = append(profiles, BPFProfile{Name: p.Name, Rules: bpfRules(p.Rules, ipSetMembers, ipv)})
+	}
+	return tiers, profiles
 }
 
-// The helpers below are ported from felix/cmd/calico-bpf/commands/policy_debug.go
-// so the editor's concise render matches `calico-node bpf policy dump` byte for
-// byte (minus hit counts / IP-set resolution, which need a live node).
-
-// indent returns two spaces per nesting level (0=top, 1=tier, 2=policy, 3=rule).
-func indent(depth int) string { return strings.Repeat("  ", depth) }
-
-// ruleOwner returns the first token after "Start of rule " — the owning
-// policy/profile's namespaced name.
-func ruleOwner(comment string) string {
-	after := strings.TrimPrefix(comment, "Start of rule ")
-	return strings.SplitN(after, " ", 2)[0]
+func bpfRules(rs []polprog.Rule, ipSetMembers map[string][]string, ipv int) []BPFRule {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]BPFRule, len(rs))
+	for i, r := range rs {
+		out[i] = bpfRule(r, ipSetMembers, ipv)
+	}
+	return out
 }
 
-// extractProtoField pulls a quoted field out of a protobuf text-format string,
-// e.g. extractProtoField(`action:"allow" protocol:{number:6}`, "action") == "allow".
-func extractProtoField(s, field string) string {
-	prefix := field + `:"`
-	idx := strings.Index(s, prefix)
-	if idx < 0 {
+// bpfRule converts one polprog.Rule to its match criteria, filtered to the
+// program's IP version — an IPv4 program drops the rule's IPv6 nets and vice
+// versa, the same narrowing felix's own rule formatting does.
+func bpfRule(r polprog.Rule, ipSetMembers map[string][]string, ipv int) BPFRule {
+	action := strings.ToLower(r.Rule.GetAction())
+	if action == "" {
+		action = "allow"
+	}
+	br := BPFRule{Action: action, MatchID: uint64(r.MatchID)}
+
+	pr := rules.FilterRuleToIPVersion(uint8(ipv), r.Rule)
+	if pr == nil {
+		return br // doesn't apply to this IP version: action only, no match
+	}
+	br.Protocol = protoName(pr.GetProtocol())
+	br.NotProtocol = protoName(pr.GetNotProtocol())
+	br.Source = bpfEntity(pr.SrcNet, pr.NotSrcNet, pr.SrcIpSetIds, pr.NotSrcIpSetIds,
+		pr.SrcPorts, pr.NotSrcPorts, pr.SrcNamedPortIpSetIds, pr.NotSrcNamedPortIpSetIds, ipSetMembers)
+	br.Destination = bpfEntity(pr.DstNet, pr.NotDstNet, pr.DstIpSetIds, pr.NotDstIpSetIds,
+		pr.DstPorts, pr.NotDstPorts, pr.DstNamedPortIpSetIds, pr.NotDstNamedPortIpSetIds, ipSetMembers)
+	br.ICMP = bpfICMP(pr.GetIcmp())
+	br.NotICMP = bpfICMP(pr.GetNotIcmp())
+	return br
+}
+
+// bpfEntity builds one leg's L3/L4 match, resolving each referenced IP set to
+// the members the calc graph captured for it. Returns nil when the leg carries
+// no criteria at all, so an empty leg drops out of the JSON entirely.
+func bpfEntity(nets, notNets, ipSets, notIPSets []string, ports, notPorts []*proto.PortRange,
+	namedPorts, notNamedPorts []string, ipSetMembers map[string][]string) *BPFEntity {
+	e := &BPFEntity{
+		Nets:          nets,
+		NotNets:       notNets,
+		IPSets:        bpfIPSets(ipSets, ipSetMembers),
+		NotIPSets:     bpfIPSets(notIPSets, ipSetMembers),
+		Ports:         bpfPortRanges(ports),
+		NotPorts:      bpfPortRanges(notPorts),
+		NamedPorts:    namedPorts,
+		NotNamedPorts: notNamedPorts,
+	}
+	if e.isEmpty() {
+		return nil
+	}
+	return e
+}
+
+// bpfIPSets pairs each set's string ID with the members ipSetMembers (the calc
+// graph's raw IPSetUpdate members) captured for it in this Request.
+func bpfIPSets(ids []string, ipSetMembers map[string][]string) []BPFIPSet {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]BPFIPSet, len(ids))
+	for i, id := range ids {
+		out[i] = BPFIPSet{ID: id, Members: ipSetMembers[id]}
+	}
+	return out
+}
+
+func bpfPortRanges(prs []*proto.PortRange) []BPFPortRange {
+	if len(prs) == 0 {
+		return nil
+	}
+	out := make([]BPFPortRange, len(prs))
+	for i, pr := range prs {
+		out[i] = BPFPortRange{First: pr.First, Last: pr.Last}
+	}
+	return out
+}
+
+// protoName names a protocol the way felix's own rule formatting does: the
+// name when the rule specifies one, else the well-known number→name mapping,
+// else the bare decimal number so nothing is silently dropped. "" when unset.
+func protoName(p *proto.Protocol) string {
+	if p == nil {
 		return ""
 	}
-	rest := s[idx+len(prefix):]
-	end := strings.Index(rest, `"`)
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
-}
-
-// formatRuleStart turns `Start of rule default/allow-tcp action:"allow" …` into
-// `Rule: default/allow-tcp  Action: allow`. An absent action means allow.
-func formatRuleStart(comment string) string {
-	after := strings.TrimPrefix(comment, "Start of rule ")
-	parts := strings.SplitN(after, " ", 2)
-	name := parts[0]
-	action := "allow"
-	if len(parts) == 2 {
-		if a := extractProtoField(parts[1], "action"); a != "" {
-			action = a
+	switch v := p.GetNumberOrName().(type) {
+	case *proto.Protocol_Name:
+		return strings.ToLower(v.Name)
+	case *proto.Protocol_Number:
+		switch v.Number {
+		case 1:
+			return "icmp"
+		case 6:
+			return "tcp"
+		case 17:
+			return "udp"
+		case 58:
+			return "icmpv6"
+		case 132:
+			return "sctp"
+		default:
+			return fmt.Sprintf("%d", v.Number)
 		}
 	}
-	return fmt.Sprintf("Rule: %s  Action: %s", name, action)
+	return ""
 }
 
-// bpfHexIDRe matches the "0x…" IP-set hex IDs polprog folds into a Match line.
-var bpfHexIDRe = regexp.MustCompile(`0x[0-9a-fA-F]+`)
-
-// resolveMatch resolves the synthetic IP-set hex IDs in a "Match: …" comment to
-// the member IPs the calc graph captured, so a selector reads as its members
-// (e.g. `src={0x3}` → `src={10.0.0.8/32,10.65.0.3/32}`) rather than an opaque
-// ID. Mirrors policy_debug.go's resolveMatchIPSets; IDs we can't resolve (no
-// captured members) are left as-is.
-func resolveMatch(comment string, membersByID map[uint64][]string) string {
-	if len(membersByID) == 0 {
-		return comment
+// bpfICMP converts an ICMP oneof (Rule.Icmp or Rule.NotIcmp) to a BPFICMP, or
+// nil when the rule doesn't match on ICMP at all.
+func bpfICMP(icmp interface{}) *BPFICMP {
+	switch v := icmp.(type) {
+	case *proto.Rule_IcmpType:
+		return &BPFICMP{Type: v.IcmpType}
+	case *proto.Rule_IcmpTypeCode:
+		code := v.IcmpTypeCode.Code
+		return &BPFICMP{Type: v.IcmpTypeCode.Type, Code: &code}
+	case *proto.Rule_NotIcmpType:
+		return &BPFICMP{Type: v.NotIcmpType}
+	case *proto.Rule_NotIcmpTypeCode:
+		code := v.NotIcmpTypeCode.Code
+		return &BPFICMP{Type: v.NotIcmpTypeCode.Type, Code: &code}
 	}
-	return bpfHexIDRe.ReplaceAllStringFunc(comment, func(hex string) string {
-		id, err := strconv.ParseUint(hex, 0, 64)
-		if err != nil {
-			return hex
-		}
-		if m := membersByID[id]; len(m) > 0 {
-			return strings.Join(m, ",")
-		}
-		return hex
-	})
-}
-
-// formatTierEnd turns `End of tier default: pass` into
-// `End Tier: default  (action: pass)`.
-func formatTierEnd(comment string) string {
-	after := strings.TrimPrefix(comment, "End of tier ")
-	parts := strings.SplitN(after, ": ", 2)
-	if len(parts) == 2 {
-		return fmt.Sprintf("End Tier: %s  (action: %s)", parts[0], parts[1])
-	}
-	return "End Tier: " + after
+	return nil
 }
 
 // ruleMatchID reproduces the dataplane's rule-hit ID: the fnv64a hash of the
