@@ -16,14 +16,14 @@
 #
 # Env overrides:
 #   CLUSTER_NAME    (default: telepathy-e2e-calico-cilium)
-#   CILIUM_VERSION  (default: 1.19.5) — kept in step with the engine's pinned
+#   CILIUM_VERSION  (default: 1.20.3) — kept in step with the engine's pinned
 #                    Cilium source tree (Makefile CILIUM_VERSION, minus the "v")
 #                    so the dataplane and the engine implement the same semantics.
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-telepathy-e2e-calico-cilium}"
 # Accept a leading "v" (Makefile pins vX.Y.Z) but Helm wants the bare version.
-CILIUM_VERSION="${CILIUM_VERSION:-1.19.5}"
+CILIUM_VERSION="${CILIUM_VERSION:-1.20.3}"
 CILIUM_VERSION="${CILIUM_VERSION#v}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

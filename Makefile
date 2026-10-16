@@ -30,7 +30,7 @@ ANTREA_DIR     ?= third_party/antrea
 # Antrea: Cilium's dependency graph (eBPF, envoy, its own controller-runtime)
 # never has to reconcile with Calico's.
 CILIUM_REPO    ?= https://github.com/cilium/cilium.git
-CILIUM_VERSION ?= v1.19.5
+CILIUM_VERSION ?= v1.20.3
 CILIUM_DIR     ?= third_party/cilium
 
 # The shell binary (Calico in-process + the api contract).
