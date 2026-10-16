@@ -121,7 +121,7 @@ func mustDataplaneRenderer(name string) dataplaneRenderer {
 //
 //	go build -ldflags "\
 //	  -X main.engineVersion=v0.1.0 \
-//	  -X main.calicoVersion=v3.32.0 \
+//	  -X main.calicoVersion=v3.33.0 \
 //	  -X main.gitCommit=$(git rev-parse --short HEAD) \
 //	  -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
 var (
@@ -129,7 +129,7 @@ var (
 	engineVersion = "dev"
 	// calicoVersion is the Calico source tree the engine is built against
 	// (the pinned tag in third_party/calico — see Makefile CALICO_VERSION).
-	calicoVersion = "v3.32.0"
+	calicoVersion = "v3.33.0"
 	// gitCommit / buildDate are stamped at build time; "unknown" otherwise.
 	gitCommit = "unknown"
 	buildDate = "unknown"

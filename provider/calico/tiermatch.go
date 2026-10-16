@@ -127,7 +127,7 @@ func ResolveTierMatches(req Request) TierMatchResponse {
 			if src.id == dst.id {
 				continue
 			}
-			if _, eot := evalFlow(g.store, src, dst, mkFlow(src, dst), mkFlow(dst, src), bundle.hepsByNode); len(eot) > 0 {
+			if _, eot := evalFlow(g.store, stagedScope(req), src, dst, mkFlow(src, dst), mkFlow(dst, src), bundle.hepsByNode); len(eot) > 0 {
 				for t := range eot {
 					eotFlows[t]++
 				}

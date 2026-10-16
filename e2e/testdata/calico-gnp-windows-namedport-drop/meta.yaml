@@ -11,9 +11,10 @@ flavor: calico
 # default-deny, so traffic Linux allows is denied on Windows.
 #
 # Note: this case only became provable after the engine's own named-port bug was
-# fixed (graph.go fixDstNamedPorts). Before that the engine also denied named
-# ports, so it agreed with Windows and produced no DIFF. Now the engine predicts
-# the correct Linux verdict (allow), so the Windows drop shows up as a DIFF.
+# fixed (app-policy checker matchPort, projectcalico/calico#13336). Before that
+# the engine also denied named ports, so it agreed with Windows and produced no
+# DIFF. Now the engine predicts the correct Linux verdict (allow), so the Windows
+# drop shows up as a DIFF.
 #
 # How it proves it: assertions encode the LINUX verdict (== engine prediction), so
 # engine-only `verify-all` passes. On a Windows cluster client->server:8080 is

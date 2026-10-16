@@ -12,7 +12,7 @@
 #   make distclean  # also remove the Calico checkout and go.work
 
 CALICO_REPO    ?= https://github.com/projectcalico/calico.git
-CALICO_VERSION ?= master
+CALICO_VERSION ?= v3.33.0
 CALICO_DIR     ?= third_party/calico
 
 # Antrea source tree — the second CNI provider. It builds as its OWN binary

@@ -67,11 +67,12 @@ func Capabilities() []Capability {
 		{Name: "source/destination.namespaceSelector", Supported: true},
 		{Name: "source/destination.nets / notNets", Supported: true},
 		{Name: "source/destination.ports / notPorts", Supported: true,
-			Notes: "numeric and ranges are fully supported. DESTINATION named ports are " +
-				"matched too: graph.go's fixDstNamedPorts moves them onto DstIpPortSetIds, " +
-				"which the checker matches IP-aware via 'ip,proto:port' tuples. Source and " +
-				"negated named ports, and rules mixing numeric+named ports in one list, have " +
-				"no correct checker path and deny by default — use numeric ports there."},
+			Notes: "numeric, ranges, and named ports are all supported. Named ports resolve " +
+				"to the (endpoint-IP, proto, port) tuples of every endpoint that declares " +
+				"the port, and the app-policy checker matches them IP-aware — on either " +
+				"side (source/destination), negated, and mixed with numeric ports in one " +
+				"list (requires Calico with projectcalico/calico#13336; earlier trees only " +
+				"match a destination named port that is a rule's sole port criterion)."},
 		{Name: "source/destination.serviceAccounts.names / selector", Supported: true,
 			Notes: "requires Endpoint.ServiceAccountName + matching Request.ServiceAccounts entry"},
 		{Name: "source/destination.services", Supported: true,
@@ -168,17 +169,11 @@ func lintPolicies(req Request) (warnings, errs []string) {
 		// HEP overlays in eval.go's matrix loop, so we no longer warn here.
 		// The Capabilities() entries spell out the residual caveats (preDNAT
 		// can't see Service ClusterIPs without a Service-IP probe mode, etc.).
-
-		// Named-port references: see Capabilities(). Destination named ports are
-		// now matched correctly (fixDstNamedPorts in graph.go moves them onto
-		// DstIpPortSetIds). Source, negated, and mixed numeric+named references
-		// still have no correct checker path and deny by default.
-		if hasNamedPortRef(p.YAML) {
-			warnings = append(warnings,
-				fmt.Sprintf("%s: references a named port; destination named ports are matched, "+
-					"but source/negated named ports and rules mixing numeric and named ports in "+
-					"one list still deny by default. Use numeric ports there.", name))
-		}
+		//
+		// Named ports used to be flagged here (only a sole-criterion destination
+		// named port matched); with projectcalico/calico#13336 the checker
+		// matches them IP-aware on either side, negated, and mixed with numeric
+		// ports, so there's nothing left to warn about.
 	}
 	return
 }
@@ -232,41 +227,6 @@ func hasHTTPOnEgress(y string) bool {
 			section = "egress"
 		case strings.HasPrefix(trimmed, "http:") && section == "egress":
 			return true
-		}
-	}
-	return false
-}
-
-// hasNamedPortRef scans for a `ports:` list inside source/destination whose
-// entries are non-numeric — i.e. the policy references a port by name.
-// Conservative: any `ports: [...]` entry that isn't an integer or a numeric
-// range counts as named.
-func hasNamedPortRef(y string) bool {
-	for _, line := range strings.Split(y, "\n") {
-		s := strings.TrimSpace(line)
-		if !strings.HasPrefix(s, "ports:") && !strings.HasPrefix(s, "notPorts:") {
-			continue
-		}
-		rest := strings.TrimSpace(strings.TrimPrefix(s, strings.SplitN(s, ":", 2)[0]+":"))
-		// Strip [ and ] and split on commas
-		rest = strings.TrimPrefix(rest, "[")
-		rest = strings.TrimSuffix(rest, "]")
-		for _, tok := range strings.Split(rest, ",") {
-			tok = strings.Trim(tok, " '\"")
-			if tok == "" {
-				continue
-			}
-			// numeric or range like "80:90"
-			isNumericish := true
-			for _, c := range tok {
-				if (c < '0' || c > '9') && c != ':' {
-					isNumericish = false
-					break
-				}
-			}
-			if !isNumericish {
-				return true
-			}
 		}
 	}
 	return false

@@ -97,13 +97,6 @@ func Evaluate(req Request) Response {
 	resp.Errors = append(resp.Errors, g.errors...)
 	store, wepByID, hepByName := g.store, g.wepByID, g.hepByName
 
-	// Work around the app-policy checker's named-port matching (Evaluate-only;
-	// the dataplane renderers must see the original named-port sets). See
-	// fixDstNamedPorts.
-	for _, pol := range store.PolicyByID {
-		fixDstNamedPorts(pol)
-	}
-
 	if os.Getenv("POLICY_ENGINE_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG weps=%d policies=%d profiles=%d ipsets=%d\n",
 			len(wepByID), len(store.PolicyByID), len(store.ProfileByID), len(store.IPSetByID))
@@ -137,7 +130,7 @@ func Evaluate(req Request) Response {
 			if src.id == dst.id {
 				continue
 			}
-			allow, _ := evalFlow(store, src, dst, mkFlow(src, dst), mkFlow(dst, src), actors.hepsByNode)
+			allow, _ := evalFlow(store, stagedScope(req), src, dst, mkFlow(src, dst), mkFlow(dst, src), actors.hepsByNode)
 
 			res := "deny"
 			if allow {
@@ -194,6 +187,18 @@ func flowFactory(req Request) func(src, dst *actor) *flow {
 	}
 }
 
+// stagedScope maps req.EvaluateStaged onto the app-policy checker's PolicyScope.
+// telepathy only feeds Staged{,Global,Kubernetes}NetworkPolicy into the calc
+// graph when EvaluateStaged is set (see feedPolicy), so the two must agree:
+// with it set we want the "what if promoted" verdict (StagedAsEnforced), and
+// without it the checker would skip the staged policies anyway (EnforcedOnly).
+func stagedScope(req Request) checker.PolicyScope {
+	if req.EvaluateStaged {
+		return checker.StagedAsEnforced
+	}
+	return checker.EnforcedOnly
+}
+
 // evalFlow runs the full per-flow policy walk for one src→dst pair and returns
 // the allow/deny verdict plus the set of tier names whose END-OF-TIER default
 // action was reached by any of the flow's evaluations. Reaching a tier's
@@ -206,12 +211,16 @@ func flowFactory(req Request) func(src, dst *actor) *flow {
 // This is the single source of truth for the matrix (Evaluate ignores the
 // end-of-tier set) and for ResolveTierMatches' end-of-tier flow accounting, so
 // the two can never diverge on the overlay logic below.
-func evalFlow(store *policystore.PolicyStore, src, dst *actor, f, rev *flow, hepsByNode map[string][]*actor) (bool, map[string]bool) {
+func evalFlow(store *policystore.PolicyStore, scope checker.PolicyScope, src, dst *actor, f, rev *flow, hepsByNode map[string][]*actor) (bool, map[string]bool) {
 	eot := map[string]bool{}
 	// eval wraps checker.Evaluate: same bool verdict as before, but it also
-	// harvests any end-of-tier actions the walk hit into eot.
+	// harvests any end-of-tier actions the walk hit into eot. scope decides
+	// whether staged policies (fed only when req.EvaluateStaged) take part —
+	// see stagedScope.
 	walk := func(dir rules.RuleDir, ep *proto.WorkloadEndpoint, fl *flow) bool {
-		trace := checker.Evaluate(dir, store, ep, fl)
+		// checker.Evaluate returns (nil, err) when the walk could not complete;
+		// treat that as no-verdict, which verdict()/the eot loop read as deny.
+		trace, _ := checker.Evaluate(scope, dir, store, ep, fl)
 		for _, rid := range trace {
 			// Count only real policy tiers reaching their end-of-tier action; the
 			// checker emits the same marker for a profile fall-through (Kind

@@ -3,25 +3,15 @@
 #
 # Env overrides:
 #   CLUSTER_NAME    (default: telepathy-e2e)
-#   CALICO_VERSION  (default: v3.32.0) — must be ≥ v3.32 for ClusterNetworkPolicy
-#                    (v1alpha2 NPA support landed in v3.32; the in-process
-#                    engines are also pinned to v3.32 via third_party/calico).
-#   NPA_VERSION     (default: v0.2.0) — version of sigs.k8s.io/network-policy-api
-#                    to source the v1alpha2 ClusterNetworkPolicy CRD from. Must
-#                    match what Calico vendors (v3.32 vendors v0.2.0).
+#   CALICO_VERSION  (default: v3.33.0) — must be ≥ v3.32 for ClusterNetworkPolicy
+#                    (v1alpha2 NPA support landed in v3.32). Kept in step with
+#                    the engine's pinned Calico tree (Makefile CALICO_VERSION).
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-telepathy-e2e}"
-CALICO_VERSION="${CALICO_VERSION:-v3.32.0}"
-NPA_VERSION="${NPA_VERSION:-v0.2.0}"
+CALICO_VERSION="${CALICO_VERSION:-v3.33.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPERATOR_URL="https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/tigera-operator.yaml"
-# Upstream network-policy-api ships the v1alpha2 ClusterNetworkPolicy CRD as a
-# standalone manifest. The Tigera operator deliberately does NOT install this
-# CRD itself — its RBAC only requests update/delete on a *pre-existing* CRD
-# (see manifests/tigera-operator.yaml: "assuming control of pre-existing CRDs,
-# for example on OCP"). So we install the CRD before the operator takes over.
-CNP_CRD_URL="https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/${NPA_VERSION}/config/crd/standard/policy.networking.k8s.io_clusternetworkpolicies.yaml"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
@@ -51,12 +41,6 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
-log "Installing network-policy-api v1alpha2 ClusterNetworkPolicy CRD ($NPA_VERSION)"
-# Apply before the operator so the operator's ownerReference adoption (and
-# Calico's CNP watcher) sees the CRD on first reconcile. Server-side apply
-# stays idempotent across reruns even after the operator stamps its owner.
-kubectl apply --server-side --force-conflicts -f "$CNP_CRD_URL"
-wait_crd_established 60 clusternetworkpolicies.policy.networking.k8s.io
 
 log "Installing Tigera operator ($CALICO_VERSION)"
 # Server-side apply avoids the 'metadata.annotations too long' error and keeps
