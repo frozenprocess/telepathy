@@ -58,6 +58,10 @@ savings depend on the number of retained columns. `-matrix-in` retains only
 asserted pairs and uses the file's single probe; assertion port/protocol overrides
 are ignored. Check the evaluation response for errors before reusing the file.
 
+Calico also groups equivalent endpoints to reduce checker calls. HostEndpoint
+topologies use per-pair evaluation; set `TELEPATHY_NO_COLLAPSE=1` to force that
+path for any topology. Output still contains every ordered pair.
+
 ### 2. `test` — assertions as a CI gate
 Write expectations next to your policies and let Telepathy enforce them. Exit code is non-zero when any assertion fails.
 

@@ -137,18 +137,34 @@ func Evaluate(req Request) Response {
 	}
 	sink := newMatrixSink(req.MatrixSink, keep)
 
-	for _, src := range actors.list {
-		for _, dst := range actors.list {
-			if src.id == dst.id {
-				continue
-			}
-			allow, _ := evalFlow(store, stagedScope(req), src, dst, mkFlow(src, dst), mkFlow(dst, src), actors.hepsByNode)
+	if len(actors.hepsByNode) == 0 && os.Getenv("TELEPATHY_NO_COLLAPSE") == "" {
+		// No HostEndpoint overlays: the verdict is egress(src) AND ingress(dst),
+		// each a pure function of (owner policy, IP-membership answers). Collapse
+		// interchangeable endpoints into classes and run the checker once per
+		// class-pair instead of once per endpoint-pair. Exact same result — see
+		// collapse.go.
+		protoNum := protocolNumber(req.Protocol)
+		dstPort := req.Port
+		if !protocolHasL4Ports(protoNum) {
+			dstPort = 0
+		}
+		fillMatrixCollapsed(sink, store, actors, mkFlow, stagedScope(req), protoNum, req.SrcPort, dstPort)
+	} else {
+		// HEP overlays are node-dependent (applyOnForward / preDNAT / doNotTrack);
+		// evaluate every pair exactly. These topologies are small.
+		for _, src := range actors.list {
+			for _, dst := range actors.list {
+				if src.id == dst.id {
+					continue
+				}
+				allow, _ := evalFlow(store, stagedScope(req), src, dst, mkFlow(src, dst), mkFlow(dst, src), actors.hepsByNode)
 
-			res := "deny"
-			if allow {
-				res = "allow"
+				res := "deny"
+				if allow {
+					res = "allow"
+				}
+				sink.put(src.id, dst.id, res)
 			}
-			sink.put(src.id, dst.id, res)
 		}
 	}
 
