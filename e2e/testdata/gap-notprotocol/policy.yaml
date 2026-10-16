@@ -1,0 +1,22 @@
+# GAP: notProtocol has no Cilium field. Calico's gnp-allow-notprotocol-udp uses a
+# rule-level `notProtocol: UDP` — "allow everything that is NOT UDP." Cilium has
+# no negated-protocol match, so parity is only reachable by composition: allow all
+# ingress, then egressDeny/ingressDeny the protocol across its whole port range.
+# Deny wins (Cilium's fixed deny-over-allow precedence), so all UDP is blocked and
+# every other protocol stays open — same connectivity, different mechanism.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-non-udp
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - {}
+  ingressDeny:
+    - toPorts:
+        - ports:
+            - {port: "1", endPort: 65535, protocol: UDP}

@@ -1,0 +1,17 @@
+assertions:
+  - name: frontend may egress to backend (matches the egress rule)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: frontend egress to other is denied by its egress default-deny
+    from: demo/frontend
+    to: demo/other
+    expect: deny
+  - name: other is unrestricted as a source (no policy selects it)
+    from: demo/other
+    to: demo/backend
+    expect: allow
+  - name: backend as a source is unrestricted (policy only governs frontend egress)
+    from: demo/backend
+    to: demo/other
+    expect: allow

@@ -1,0 +1,21 @@
+# UDP L4 on egress (Cilium's analog of Calico's gnp-protocol-numeric-udp): the
+# rule permits frontend to reach backend only on UDP/5353. This exercises the
+# non-TCP protocol path and egress default-deny together — TCP to backend and
+# any traffic to other are denied.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: frontend-egress-backend-udp
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: frontend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            role: backend
+      toPorts:
+        - ports:
+            - port: "5353"
+              protocol: UDP

@@ -1,0 +1,21 @@
+# Named-port L4 (Cilium's analog of Calico's gnp-named-port-ingress): the rule
+# references the destination's named port "http" rather than a number, which
+# resolves against backend's declared container port. frontend may reach only
+# backend's http port; its other listener (alt) is not opened.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-frontend-named-http
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend
+      toPorts:
+        - ports:
+            - port: "http"
+              protocol: TCP

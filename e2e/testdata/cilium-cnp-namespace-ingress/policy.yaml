@@ -1,0 +1,18 @@
+# Cilium namespace-based ingress (docs.cilium.io "Kubernetes Namespaces"):
+# Cilium exposes a pod's namespace as the reserved label
+# k8s:io.kubernetes.pod.namespace, so a fromEndpoints selector keyed on it
+# admits an entire namespace. Here backend (in 'prod') accepts ingress only
+# from pods in namespace 'dev'.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-from-dev-namespace
+  namespace: prod
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dev

@@ -18,52 +18,166 @@
 package main
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
 	"strings"
+	"sync"
 
+	"github.com/cilium/cilium/pkg/identity"
+	"github.com/cilium/cilium/pkg/identity/identitymanager"
+	ipcacheTypes "github.com/cilium/cilium/pkg/ipcache/types"
+	"github.com/cilium/cilium/pkg/k8s"
+	k8sConst "github.com/cilium/cilium/pkg/k8s/apis/cilium.io"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	slim_networkingv1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/api/networking/v1"
+	"github.com/cilium/cilium/pkg/labels"
+	"github.com/cilium/cilium/pkg/option"
 	"github.com/cilium/cilium/pkg/policy"
+	policyapi "github.com/cilium/cilium/pkg/policy/api"
 	policytypes "github.com/cilium/cilium/pkg/policy/types"
+	testpolicy "github.com/cilium/cilium/pkg/testutils/policy"
 	"github.com/cilium/cilium/pkg/u8proto"
+	"sigs.k8s.io/yaml"
 
 	"github.com/frozenprocess/telepathy/api"
 )
 
-// evaluate computes the pod-to-pod connectivity matrix for req. Selector
-// resolution and the verdict are Cilium's own: build() constructs a real
-// pkg/policy Repository, and policy.LookupFlow resolves each flow's egress
-// (source) and ingress (destination) policy through the SelectorCache and
-// EndpointPolicy map — a flow is allowed only if neither side denies it, the
-// same two-sided model the Calico and Antrea engines use.
+// firstUserIdentity is where we start numbering fabricated pod identities.
+// Below identity.MinimalNumericIdentity (256) is the reserved range (world,
+// host, remote-node, …); user identities live at/above it.
+const firstUserIdentity = 256
+
+// evaluate computes the pod-to-pod connectivity matrix for req by driving
+// Cilium's own policy engine offline: one fabricated identity per endpoint
+// (labels + namespace), rules loaded via CiliumNetworkPolicy.Parse ->
+// Repository.MustAddList, then policy.LookupFlow per src->dst pair. A flow is
+// "allow" iff LookupFlow reports neither src-egress nor dst-ingress denied —
+// Cilium's two-sided enforcement, matching the Calico/Antrea providers.
+//
+// ponytail: O(n^2) LookupFlow calls (one full policy resolution per ordered
+// endpoint pair). Fine for topology-sized inputs; cache per-source
+// SelectorPolicy if a large matrix ever gets slow.
 func evaluate(req api.Request) api.Response {
-	m := build(req)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// Process-wide default: enforce policy only for endpoints a policy selects
+	// (Cilium's normal mode). ponytail: package global, so one enforcement mode
+	// per process — irrelevant for a single-shot CLI.
+	policy.SetPolicyEnabled(option.DefaultEnforcement)
 
 	resp := api.Response{Matrix: map[string]string{}}
-	resp.Warnings = m.warnings
-	resp.Errors = m.errors
 
-	proto := u8proto.TCP
-	if strings.EqualFold(req.Protocol, "udp") {
-		proto = u8proto.UDP
+	// Namespace name -> its labels, so we can project them onto pod identities
+	// (Cilium exposes a namespace's labels on every pod in it — see endpointLabels).
+	nsLabels := make(map[string]map[string]string, len(req.Namespaces))
+	for _, ns := range req.Namespaces {
+		nsLabels[ns.Name] = ns.Labels
 	}
-	port := uint16(req.Port)
+
+	// 1. Fabricate an identity per endpoint. Distinct numeric IDs even when
+	// labels collide — selectors match on labels, so identical-label endpoints
+	// get identical verdicts anyway.
+	idents := make([]*identity.Identity, len(req.Endpoints))
+	idMap := identity.IdentityMap{}
+	namedTCP := make([]map[string]uint16, len(req.Endpoints))
+	namedUDP := make([]map[string]uint16, len(req.Endpoints))
+	for i, ep := range req.Endpoints {
+		id := identity.NewIdentity(identity.NumericIdentity(firstUserIdentity+i), endpointLabels(ep, nsLabels))
+		idents[i] = id
+		idMap[id.ID] = id.LabelArray
+		namedTCP[i], namedUDP[i] = namedPorts(ep, "tcp"), namedPorts(ep, "udp")
+	}
+
+	// 2. Repository seeded with those identities. nil cert/L7/translator are
+	// tolerated for L3/L4 policy; L7/TLS rules would need them wired.
+	idmgr := identitymanager.NewIDManager(logger)
+	repo := policy.NewPolicyRepository(logger, nil, nil, nil, idmgr, testpolicy.NewPolicyMetricsNoop())
+
+	// LookupFlow checks BOTH the subject and the regular SelectorCache, and the
+	// constructor only seeds the regular one — so load identities into both.
+	wg := &sync.WaitGroup{}
+	repo.GetSelectorCache().UpdateIdentities(idMap, nil, wg)
+	repo.GetSubjectSelectorCache().UpdateIdentities(idMap, nil, wg)
+	wg.Wait()
+
+	// 3. Load policies. CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy
+	// convert to api.Rules (loaded together via MustAddList). Plain Kubernetes
+	// NetworkPolicy takes Cilium's own k8s seam instead — ParseNetworkPolicy
+	// yields policy.PolicyEntries loaded per-object via ReplaceByResource, the
+	// same path the agent's policy watcher uses.
+	var cnpRules policyapi.Rules
+	for _, p := range req.Policies {
+		kind, apiVersion, err := manifestHead(p.YAML)
+		if err != nil {
+			resp.Errors = append(resp.Errors, err.Error())
+			continue
+		}
+		switch {
+		case kind == "CiliumNetworkPolicy" || kind == "CiliumClusterwideNetworkPolicy":
+			rs, err := parseCiliumCRD(logger, kind, p.YAML)
+			if err != nil {
+				resp.Errors = append(resp.Errors, err.Error())
+				continue
+			}
+			cnpRules = append(cnpRules, rs...)
+		case isK8sNetworkPolicy(kind, apiVersion, p.Flavor):
+			if err := loadK8sNetworkPolicy(logger, repo, p.YAML); err != nil {
+				resp.Errors = append(resp.Errors, err.Error())
+			}
+		default:
+			resp.Warnings = append(resp.Warnings,
+				fmt.Sprintf("cilium provider: skipping manifest kind %q "+
+					"(evaluated kinds: CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy, k8s NetworkPolicy)", kind))
+		}
+	}
+	if len(cnpRules) > 0 {
+		func() {
+			// MustAddList panics on an invalid rule; contain it so one bad
+			// policy becomes an error, not a dead engine.
+			defer func() {
+				if r := recover(); r != nil {
+					resp.Errors = append(resp.Errors, fmt.Sprintf("cilium provider: load rules: %v", r))
+				}
+			}()
+			repo.MustAddList(cnpRules)
+		}()
+	}
+
+	// 4. Probe defaults mirror the Antrea engine (tcp/8080) so a topology with
+	// no explicit probe evaluates identically across engines. LookupFlow
+	// rejects a zero port/proto, so these must be non-zero.
+	proto := u8proto.TCP
+	if req.Protocol != "" {
+		if p, err := u8proto.ParseProtocol(strings.ToUpper(req.Protocol)); err == nil {
+			proto = p
+		}
+	}
+	port := req.Port
 	if port == 0 {
 		port = 8080
 	}
 
-	// One-shot note if any external/non-namespaced endpoints are present: they
-	// have no security identity yet, so pairs touching them can't be resolved
-	// through pkg/policy. ponytail: model these as world/CIDR peers next.
-	if len(m.ids) < len(req.Endpoints) {
-		resp.Warnings = append(resp.Warnings,
-			"cilium provider: non-namespaced endpoints have no identity yet; "+
-				"flows to/from them are reported deny (world/CIDR peers not modelled)")
-	}
-
-	for _, src := range req.Endpoints {
-		for _, dst := range req.Endpoints {
+	for i, src := range req.Endpoints {
+		for j, dst := range req.Endpoints {
 			if src.ID == dst.ID {
 				continue
 			}
-			resp.Matrix[src.ID+"->"+dst.ID] = m.verdict(src, dst, proto, port)
+			flow := policytypes.Flow{
+				From:          idents[i],
+				To:            idents[j],
+				Proto:         proto,
+				Dport:         uint16(port),
+				NamedPortsTCP: namedTCP[j],
+				NamedPortsUDP: namedUDP[j],
+			}
+			verdict := "deny"
+			if v, _, _, err := policy.LookupFlow(logger, repo, idmgr, flow); err != nil {
+				resp.Warnings = append(resp.Warnings,
+					fmt.Sprintf("cilium provider: %s->%s lookup: %v", src.ID, dst.ID, err))
+			} else if v.Allowed() {
+				verdict = "allow"
+			}
+			resp.Matrix[src.ID+"->"+dst.ID] = verdict
 		}
 	}
 
@@ -78,29 +192,130 @@ func evaluate(req api.Request) api.Response {
 	return resp
 }
 
-// verdict resolves one src->dst:port flow through Cilium's policy engine,
-// returning "allow" or "deny". Pairs involving an endpoint with no security
-// identity (external/non-namespaced) can't be looked up and default to deny.
-func (m model) verdict(src, dst api.Endpoint, proto u8proto.U8proto, port uint16) string {
-	from, ok := m.ids[src.ID]
-	if !ok {
-		return "deny"
+// endpointLabels builds the Cilium label set for an endpoint the way the agent
+// does, all under the k8s source (what selectors compile against):
+//   - the pod's own labels,
+//   - io.kubernetes.pod.namespace=<ns> (scopes a namespaced CNP's endpointSelector),
+//   - the namespace's labels projected as io.cilium.k8s.namespace.labels.<k>=<v>,
+//     which is what a k8s NetworkPolicy namespaceSelector is compiled to match
+//     (plus kubernetes.io/metadata.name, which the apiserver always sets).
+func endpointLabels(ep api.Endpoint, nsLabels map[string]map[string]string) labels.Labels {
+	m := make(map[string]string, len(ep.Labels)+2)
+	for k, v := range ep.Labels {
+		m[k] = v
 	}
-	to, ok := m.ids[dst.ID]
-	if !ok {
-		return "deny"
+	if ns := endpointNamespace(ep); ns != "" {
+		m[k8sConst.PodNamespaceLabel] = ns
+		project := func(k, v string) { m[policy.JoinPath(k8sConst.PodNamespaceMetaLabels, k)] = v }
+		project(k8sConst.LabelMetadataName, ns)
+		for k, v := range nsLabels[ns] {
+			project(k, v)
+		}
 	}
-	flow := policytypes.Flow{From: from, To: to, Proto: proto, Dport: port}
-	verdict, _, _, err := policy.LookupFlow(m.logger, m.repo, m.idMgr, flow)
-	if err != nil || !verdict.Allowed() {
-		return "deny"
-	}
-	return "allow"
+	return labels.Map2Labels(m, labels.LabelSourceK8s)
 }
 
-// endpointNamespace resolves an endpoint's namespace, falling back to splitting
-// the "<namespace>/<name>" ID. A non-namespaced endpoint (external destination
-// / host) yields "" and gets no security identity.
+// namedPorts maps an endpoint's declared named ports for one protocol to their
+// numbers, so a rule referencing a named port resolves against the destination.
+func namedPorts(ep api.Endpoint, proto string) map[string]uint16 {
+	var m map[string]uint16
+	for _, p := range ep.Ports {
+		pp := p.Protocol
+		if pp == "" {
+			pp = "tcp"
+		}
+		if p.Name != "" && strings.EqualFold(pp, proto) {
+			if m == nil {
+				m = map[string]uint16{}
+			}
+			m[p.Name] = uint16(p.Port)
+		}
+	}
+	return m
+}
+
+// manifestHead extracts a manifest's kind and apiVersion — enough to route it
+// to the right loader without a full decode.
+func manifestHead(yamlText string) (kind, apiVersion string, err error) {
+	var head struct {
+		Kind       string `json:"kind"`
+		APIVersion string `json:"apiVersion"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlText), &head); err != nil {
+		return "", "", fmt.Errorf("cilium provider: cannot parse manifest: %v", err)
+	}
+	return head.Kind, head.APIVersion, nil
+}
+
+// isK8sNetworkPolicy reports whether a manifest is an upstream Kubernetes
+// NetworkPolicy (vs a Cilium CRD that shares the "NetworkPolicy" suffix).
+func isK8sNetworkPolicy(kind, apiVersion, flavor string) bool {
+	return kind == "NetworkPolicy" &&
+		(flavor == "k8s" || strings.HasPrefix(apiVersion, "networking.k8s.io/"))
+}
+
+// parseCiliumCRD decodes a CiliumNetworkPolicy / CiliumClusterwideNetworkPolicy
+// into Cilium api.Rules via the CRD's own Parse (which sanitizes and, for the
+// namespaced CNP, injects the namespace match requirement).
+func parseCiliumCRD(logger *slog.Logger, kind, yamlText string) (policyapi.Rules, error) {
+	switch kind {
+	case "CiliumNetworkPolicy":
+		var cnp ciliumv2.CiliumNetworkPolicy
+		if err := yaml.Unmarshal([]byte(yamlText), &cnp); err != nil {
+			return nil, fmt.Errorf("cilium provider: cannot decode CiliumNetworkPolicy: %v", err)
+		}
+		if cnp.Namespace == "" {
+			cnp.Namespace = "default"
+		}
+		rules, err := cnp.Parse(logger, "")
+		if err != nil {
+			return nil, fmt.Errorf("cilium provider: invalid CiliumNetworkPolicy %q: %v", cnp.Name, err)
+		}
+		return rules, nil
+	default: // CiliumClusterwideNetworkPolicy
+		var ccnp ciliumv2.CiliumClusterwideNetworkPolicy
+		if err := yaml.Unmarshal([]byte(yamlText), &ccnp); err != nil {
+			return nil, fmt.Errorf("cilium provider: cannot decode CiliumClusterwideNetworkPolicy: %v", err)
+		}
+		rules, err := ccnp.Parse(logger, "")
+		if err != nil {
+			return nil, fmt.Errorf("cilium provider: invalid CiliumClusterwideNetworkPolicy %q: %v", ccnp.Name, err)
+		}
+		return rules, nil
+	}
+}
+
+// loadK8sNetworkPolicy converts a plain Kubernetes NetworkPolicy through
+// Cilium's own k8s.ParseNetworkPolicy (which yields policy.PolicyEntries, not
+// api.Rules) and loads it via Repository.ReplaceByResource under a per-object
+// resource id — mirroring how the agent's policy watcher imports it. The
+// recover guards the Sanitize/insert path so one malformed policy is an error,
+// not a dead engine.
+func loadK8sNetworkPolicy(logger *slog.Logger, repo *policy.Repository, yamlText string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("cilium provider: load k8s NetworkPolicy: %v", r)
+		}
+	}()
+	var np slim_networkingv1.NetworkPolicy
+	if uerr := yaml.Unmarshal([]byte(yamlText), &np); uerr != nil {
+		return fmt.Errorf("cilium provider: cannot decode NetworkPolicy: %v", uerr)
+	}
+	ns := np.Namespace
+	if ns == "" {
+		ns = "default"
+	}
+	entries, perr := k8s.ParseNetworkPolicy(logger, "", &np)
+	if perr != nil {
+		return fmt.Errorf("cilium provider: invalid NetworkPolicy %q: %v", np.Name, perr)
+	}
+	repo.ReplaceByResource(entries, ipcacheTypes.NewResourceID(ipcacheTypes.ResourceKindNetpol, ns, np.Name))
+	return nil
+}
+
+// endpointNamespace resolves an endpoint's pod namespace, falling back to
+// splitting the "<namespace>/<name>" ID when the explicit field is unset (the
+// harness's canonical ID form).
 func endpointNamespace(ep api.Endpoint) string {
 	if ep.Namespace != "" {
 		return ep.Namespace

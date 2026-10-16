@@ -1,0 +1,36 @@
+# backend in prod; candidate sources vary namespace and role so only the
+# dev+client combination should be admitted.
+namespaces:
+  - name: prod
+    labels:
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.1
+    labels: {role: backend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: dev/client
+    namespace: dev
+    name: client
+    ip: 10.0.0.2
+    labels: {role: client}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: dev/other
+    namespace: dev
+    name: other
+    ip: 10.0.0.3
+    labels: {role: other}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: prod/client
+    namespace: prod
+    name: client
+    ip: 10.0.0.4
+    labels: {role: client}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+port: 8080
+protocol: tcp

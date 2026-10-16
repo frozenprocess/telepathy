@@ -1,0 +1,5 @@
+assertions:
+  - {name: env-labelled db default-denies ingress, from: demo/app, to: demo/db, expect: deny}
+  - {name: env-labelled app default-denies ingress, from: demo/db, to: demo/app, expect: deny}
+  - {name: platform has no env label so is not selected, from: demo/app, to: demo/platform, expect: allow}
+  - {name: platform as a source is unrestricted, from: demo/platform, to: demo/db, expect: deny}

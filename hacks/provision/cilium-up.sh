@@ -51,7 +51,8 @@ helm upgrade --install cilium cilium/cilium \
   --version "$CILIUM_VERSION" \
   --namespace kube-system \
   --set image.pullPolicy=IfNotPresent \
-  --set ipam.mode=kubernetes
+  --set ipam.mode=kubernetes \
+  --set sctp.enabled=true
 
 log "Waiting for cilium-operator + cilium agent"
 kubectl -n kube-system rollout status deploy/cilium-operator --timeout=300s

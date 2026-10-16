@@ -1,0 +1,17 @@
+# Cilium set-based selectors: an endpointSelector/fromEndpoints is a Kubernetes
+# LabelSelector, so matchExpressions (In/NotIn/Exists/DoesNotExist) work as they
+# do everywhere. This mirrors Calico's gnp-selector-in-set. backend admits only
+# peers whose `tier` label is in {web, api}.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-tier-in-set
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - {key: tier, operator: In, values: [web, api]}

@@ -1,0 +1,2 @@
+# cilium-flavored: only the cilium engine evaluates CiliumNetworkPolicy.
+flavor: cilium

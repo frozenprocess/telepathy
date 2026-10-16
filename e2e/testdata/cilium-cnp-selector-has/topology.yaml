@@ -1,0 +1,12 @@
+# app + db carry an `env` label (selected by has(env)/Exists); platform carries
+# none, so it is left open.
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+endpoints:
+  - {id: demo/app,      namespace: demo, name: app,      ip: 10.0.0.1, labels: {role: app, env: prod},      ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: demo/db,       namespace: demo, name: db,       ip: 10.0.0.2, labels: {role: db, env: prod},       ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: demo/platform, namespace: demo, name: platform, ip: 10.0.0.3, labels: {k8s-app: platform},        ports: [{name: http, port: 8080, protocol: tcp}]}
+port: 8080
+protocol: tcp

@@ -1,0 +1,25 @@
+assertions:
+  - name: frontend reaches backend on the permitted UDP/5353
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+    protocol: udp
+    port: 5353
+  - name: frontend TCP to backend is denied (only UDP/5353 is allowed)
+    from: demo/frontend
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 8080
+  - name: frontend UDP to other is denied (egress default-deny, wrong peer)
+    from: demo/frontend
+    to: demo/other
+    expect: deny
+    protocol: udp
+    port: 5353
+  - name: other is unrestricted as a source
+    from: demo/other
+    to: demo/backend
+    expect: allow
+    protocol: udp
+    port: 5353

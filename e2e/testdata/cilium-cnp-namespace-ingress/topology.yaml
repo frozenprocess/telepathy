@@ -1,0 +1,30 @@
+# backend + a same-namespace frontend in 'prod', and a client in 'dev'. Only
+# the dev client should be admitted; the same-namespace frontend should not.
+namespaces:
+  - name: prod
+    labels:
+      kubernetes.io/metadata.name: prod
+  - name: dev
+    labels:
+      kubernetes.io/metadata.name: dev
+endpoints:
+  - id: prod/backend
+    namespace: prod
+    name: backend
+    ip: 10.0.0.1
+    labels: {role: backend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: prod/frontend
+    namespace: prod
+    name: frontend
+    ip: 10.0.0.2
+    labels: {role: frontend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: dev/client
+    namespace: dev
+    name: client
+    ip: 10.0.0.3
+    labels: {role: client}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+port: 8080
+protocol: tcp

@@ -1,0 +1,16 @@
+# Cluster-wide default-deny both directions (Cilium's analog of Calico's
+# default-deny-all-namespaces-calico, a GNP with types:[Ingress,Egress] and no
+# rules). Cilium has no implicit "selected + no rule = deny" for a bare policy —
+# an empty ingress/egress list is rejected ("rule must have at least one of ...").
+# The parity form is an explicit catch-all deny: endpointSelector {} with
+# ingressDeny/egressDeny [{}] (deny from/to every peer).
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  endpointSelector: {}
+  ingressDeny:
+    - {}
+  egressDeny:
+    - {}

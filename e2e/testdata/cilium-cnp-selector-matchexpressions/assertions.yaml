@@ -1,0 +1,13 @@
+assertions:
+  - name: frontend (tier=web) is in the set — allowed
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: other (tier=data) is not in the set — denied
+    from: demo/other
+    to: demo/backend
+    expect: deny
+  - name: backend as a source is unrestricted
+    from: demo/backend
+    to: demo/frontend
+    expect: allow

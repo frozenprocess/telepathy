@@ -1,0 +1,8 @@
+# cilium-flavored: only the cilium engine evaluates CiliumNetworkPolicy.
+#
+# Half of the mixed numeric+named port parity pair. topology.yaml and
+# assertions.yaml are byte-identical to calico-np-mixed-numeric-named-port. Cilium
+# evaluates a toPorts list mixing a numeric and a named port correctly (both legs
+# allowed), so this case PASSES on the cilium engine and documents the reference
+# behaviour the Calico twin's fix restores.
+flavor: cilium

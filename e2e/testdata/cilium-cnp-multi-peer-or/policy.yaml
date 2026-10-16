@@ -1,0 +1,18 @@
+# Multiple peers = OR (Cilium's analog of Calico's gnp-selector-or): two
+# fromEndpoints entries admit role=frontend OR role=api; any other source is
+# denied by backend's default-deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-frontend-or-api
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend
+        - matchLabels:
+            role: api

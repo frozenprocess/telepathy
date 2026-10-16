@@ -1,0 +1,27 @@
+# All pods share team=a (so the broad egress allow matches all of them); only
+# the egressDeny on role=other should keep frontend from reaching 'other'.
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+endpoints:
+  - id: demo/frontend
+    namespace: demo
+    name: frontend
+    ip: 10.0.0.1
+    labels: {role: frontend, team: a}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.2
+    labels: {role: backend, team: a}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: demo/other
+    namespace: demo
+    name: other
+    ip: 10.0.0.3
+    labels: {role: other, team: a}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+port: 8080
+protocol: tcp

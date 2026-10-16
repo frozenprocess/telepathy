@@ -1,0 +1,6 @@
+# Shared assertions for the mixed numeric+named port pair. A ports list [80, web]
+# is an OR: both the numeric leg (80) and the named leg (8080) must be allowed.
+# expect = author intent and correct live-cluster behaviour on both CNIs.
+assertions:
+  - {name: named leg web (8080) allowed, from: demo/frontend, to: demo/backend, expect: allow, protocol: tcp, port: 8080}
+  - {name: numeric leg 80 allowed, from: demo/frontend, to: demo/backend, expect: allow, protocol: tcp, port: 80}

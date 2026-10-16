@@ -24,12 +24,14 @@
 // vendor-neutral JSON contract: an api.Request on stdin, an api.Response on
 // stdout.
 //
-// Unlike Calico's ordered per-endpoint rule chains, Cilium collapses a
-// workload's labels into a numeric security identity and renders policy as a
-// {direction, identity, port, protocol} -> verdict table. This engine drives
-// Cilium's own pkg/policy offline: it builds a Repository from the request's
-// policies, distills each endpoint's SelectorPolicy, and resolves every probe
-// via EndpointPolicy.Lookup (see eval.go / harness.go).
+// It drives Cilium's own policy.LookupFlow (pkg/policy/lookup.go) offline:
+// fabricate an identity per endpoint (identity.NewIdentity), seed the
+// SelectorCache with their labels, load rules via Repository.MustAddList after
+// CiliumNetworkPolicy.Parse (or Repository.ReplaceByResource for plain k8s
+// NetworkPolicy), then LookupFlow per src->dst pair for the verdict (see
+// eval.go). Today it evaluates CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy
+// and k8s NetworkPolicy; the policy-program dump (EndpointPolicy.GetMapState())
+// is the next step.
 package main
 
 import (
@@ -71,30 +73,40 @@ func fail(format string, a ...any) {
 	os.Exit(1)
 }
 
-// capabilities lists what the Cilium engine honors today. Entries with
-// Supported=false are recognised but not yet evaluated. Printed as JSON for the
-// shell's `version` banner via the -capabilities flag.
-//
-// k8s NetworkPolicy is driven through Cilium's real pkg/policy; the CRD kinds
-// and world/CIDR peers are recognised but not yet evaluated (flip each as its
-// path lands in eval.go/harness.go).
+// capabilities lists what the Cilium engine honors. Entries with
+// Supported=false are recognised but not yet evaluated. This mirrors the
+// offline-feasibility scan of Cilium v1.19: everything statically resolvable
+// from policy + identities is reachable; FQDN/Services/L7/auth need runtime
+// state and stay unsupported. Printed as JSON for the shell's `version` banner
+// via the -capabilities flag.
 func capabilities() []api.Capability {
 	return []api.Capability{
+		{Name: "kind: CiliumNetworkPolicy (cilium.io/v2)", Supported: true,
+			Notes: "CiliumNetworkPolicy.Parse -> api.Rules -> Repository.MustAddList, evaluated via policy.LookupFlow"},
+		{Name: "kind: CiliumClusterwideNetworkPolicy (cilium.io/v2)", Supported: true},
 		{Name: "kind: NetworkPolicy (k8s)", Supported: true,
-			Notes: "parsed via Cilium's pkg/k8s.ParseNetworkPolicy, resolved through pkg/policy.LookupFlow"},
-		{Name: "spec.podSelector", Supported: true},
-		{Name: "ingress / egress rules", Supported: true,
-			Notes: "two-sided: a flow is allowed only if neither src egress nor dst ingress denies it"},
-		{Name: "from/to.podSelector + namespaceSelector", Supported: true},
-		{Name: "ports (numeric, named, ranges)", Supported: true,
-			Notes: "resolved by Cilium; named ports keyed off the destination endpoint"},
-		{Name: "policyTypes (Ingress/Egress isolation)", Supported: true},
-		{Name: "from/to.ipBlock (cidr + except)", Supported: false,
-			Notes: "needs world/CIDR identities for the peer; non-namespaced endpoints not modelled yet"},
-		{Name: "kind: CiliumNetworkPolicy (cilium.io)", Supported: false,
-			Notes: "label-based identities, L7 (HTTP), entities (world/cluster/host) — after k8s NP"},
-		{Name: "kind: CiliumClusterwideNetworkPolicy (cilium.io)", Supported: false},
-		{Name: "dataplane render (eBPF policy map)", Supported: false,
-			Notes: "Cilium's verdict is a map lookup, not a rule chain; render would dump MapState entries"},
+			Notes: "via k8s.ParseNetworkPolicy -> policy.PolicyEntries -> Repository.ReplaceByResource (Cilium's own k8s seam)"},
+		{Name: "L3 endpoint/label selectors", Supported: true,
+			Notes: "EndpointSelector resolved to identities via the real SelectorCache"},
+		{Name: "L3 CIDR (+except, CIDRGroups)", Supported: true,
+			Notes: "matched against an endpoint's identity labels; a peer's raw IP is not resolved to a CIDR identity yet"},
+		{Name: "entities (world/host/remote-node/kube-apiserver/…)", Supported: true,
+			Notes: "reserved-identity selectors resolve; endpoints are labeled workloads, so a world/host peer must be modeled as such"},
+		{Name: "L4 ports (numeric, ranges, named)", Supported: true,
+			Notes: "named ports resolve against the destination endpoint's declared ports"},
+		{Name: "ICMP type/code", Supported: true},
+		{Name: "deny policies (Ingress/EgressDeny) + precedence", Supported: true,
+			Notes: "Deny wins over Allow within a tier; Pass skips the rest of the tier"},
+		{Name: "default-deny / enforcement mode", Supported: true,
+			Notes: "an endpoint selected by any policy is default-deny for that direction (Cilium's default mode)"},
+		{Name: "toFQDNs (DNS)", Supported: false,
+			Notes: "needs a resolver; pre-resolve to CIDRs as a workaround (cf. Calico Request.DNS)"},
+		{Name: "toServices", Supported: false, Notes: "needs service->endpoints resolution"},
+		{Name: "L7 HTTP / DNS visibility", Supported: false,
+			Notes: "Envoy-bound; not offline-evaluable (Calico evaluates L7 HTTP via Dikastes — a genuine gap)"},
+		{Name: "authentication (mTLS/SPIFFE), Groups (AWS)", Supported: false,
+			Notes: "runtime-only"},
+		{Name: "policy-program dump (BPF policy MapState)", Supported: false,
+			Notes: "offline analog of Calico's BPF render: EndpointPolicy.GetMapState() in userspace, no kernel — next step"},
 	}
 }

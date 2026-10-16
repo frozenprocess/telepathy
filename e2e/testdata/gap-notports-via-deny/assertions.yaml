@@ -1,0 +1,3 @@
+assertions:
+  - {name: excluded port 8080 is denied, from: demo/frontend, to: demo/backend, expect: deny, protocol: tcp, port: 8080}
+  - {name: every other port is open,     from: demo/frontend, to: demo/backend, expect: allow, protocol: tcp, port: 9090}

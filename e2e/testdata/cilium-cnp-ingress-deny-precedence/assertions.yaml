@@ -1,0 +1,13 @@
+assertions:
+  - name: frontend is allowed (matches team=a allow, not covered by the deny)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: other is denied even though it matches team=a — ingressDeny wins
+    from: demo/other
+    to: demo/backend
+    expect: deny
+  - name: backend as a source is unrestricted
+    from: demo/backend
+    to: demo/frontend
+    expect: allow

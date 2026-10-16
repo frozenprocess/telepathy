@@ -1,0 +1,20 @@
+# Cilium Layer 4: an endpoints-based ingress rule narrowed with toPorts
+# (docs.cilium.io "Layer 4 Examples"). frontend may reach backend, but only on
+# TCP/8080 — any other port/protocol falls through backend's default-deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-frontend-tcp8080
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

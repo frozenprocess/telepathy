@@ -1,0 +1,9 @@
+# A sender pings a receiver. ICMP echo-request is allowed; TCP is not.
+namespaces:
+  - name: demo
+    labels: {kubernetes.io/metadata.name: demo}
+endpoints:
+  - {id: demo/sender,   namespace: demo, name: sender,   ip: 10.0.0.1, labels: {role: sender},   ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: demo/receiver, namespace: demo, name: receiver, ip: 10.0.0.2, labels: {role: receiver}, ports: [{name: http, port: 8080, protocol: tcp}]}
+port: 8080
+protocol: icmp

@@ -1,0 +1,17 @@
+# Cilium Layer 3, endpoints-based (label) ingress — the canonical CNP example
+# (docs.cilium.io "Layer 3 Examples / Endpoints Based"). Selecting role=backend
+# with an ingress rule makes backend default-deny for ingress, then allows only
+# pods labeled role=frontend to reach it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend

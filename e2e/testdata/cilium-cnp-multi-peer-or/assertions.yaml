@@ -1,0 +1,13 @@
+assertions:
+  - name: frontend is admitted (first peer)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: api is admitted (second peer)
+    from: demo/api
+    to: demo/backend
+    expect: allow
+  - name: other matches neither peer — denied
+    from: demo/other
+    to: demo/backend
+    expect: deny

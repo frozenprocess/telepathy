@@ -1,0 +1,9 @@
+assertions:
+  - name: a pod in namespace dev reaches backend (namespace selector matches)
+    from: dev/client
+    to: prod/backend
+    expect: allow
+  - name: a same-namespace (prod) pod is denied — it is not in dev
+    from: prod/frontend
+    to: prod/backend
+    expect: deny

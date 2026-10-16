@@ -1,0 +1,19 @@
+# Shared topology for the mixed numeric+named port parity pair
+# (calico-np-mixed-numeric-named-port <-> cilium-cnp-mixed-numeric-named-port).
+# Byte-identical between the two cases. backend serves numeric TCP 80 and names
+# TCP 8080 "web"; a rule that lists both [80, web] must allow BOTH (OR semantics).
+namespaces:
+  - name: demo
+    labels: {kubernetes.io/metadata.name: demo}
+endpoints:
+  - {id: demo/frontend, namespace: demo, name: frontend, ip: 10.0.0.1, labels: {role: frontend}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.2
+    labels: {role: backend}
+    ports:
+      - {name: svc, port: 80,   protocol: tcp}
+      - {name: web, port: 8080, protocol: tcp}
+port: 8080
+protocol: tcp

@@ -1,0 +1,4 @@
+assertions:
+  # Cilium models an ICMP type as the L4 port (echo-request = type 8 -> port 8).
+  - {name: icmp echo-request allowed, from: demo/sender, to: demo/receiver, expect: allow, protocol: icmp, port: 8}
+  - {name: tcp hits default-deny,     from: demo/sender, to: demo/receiver, expect: deny, protocol: tcp, port: 8080}

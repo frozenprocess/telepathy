@@ -1,0 +1,5 @@
+assertions:
+  - {name: prod may reach DNS, from: prod/frontend, to: dns-system/coredns, expect: allow, protocol: udp, port: 53}
+  - {name: dev may reach DNS,  from: dev/frontend,  to: dns-system/coredns, expect: allow, protocol: udp, port: 53}
+  - {name: workload egress to non-DNS is denied, from: prod/frontend, to: prod/backend, expect: deny, protocol: udp, port: 53}
+  - {name: cross-namespace non-DNS denied,        from: prod/frontend, to: dev/frontend, expect: deny, protocol: udp, port: 53}

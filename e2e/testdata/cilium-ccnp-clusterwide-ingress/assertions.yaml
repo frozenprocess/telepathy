@@ -1,0 +1,13 @@
+assertions:
+  - name: same-namespace frontend reaches backend
+    from: ns1/frontend
+    to: ns1/backend
+    expect: allow
+  - name: cross-namespace frontend also reaches backend (clusterwide scope)
+    from: ns2/frontend
+    to: ns1/backend
+    expect: allow
+  - name: a non-frontend pod is denied by backend's default-deny
+    from: ns2/other
+    to: ns1/backend
+    expect: deny

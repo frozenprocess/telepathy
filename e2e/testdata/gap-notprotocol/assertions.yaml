@@ -1,0 +1,3 @@
+assertions:
+  - {name: non-UDP (TCP) is allowed, from: demo/frontend, to: demo/backend, expect: allow, protocol: tcp, port: 8080}
+  - {name: UDP is denied,            from: demo/frontend, to: demo/backend, expect: deny, protocol: udp, port: 8081}

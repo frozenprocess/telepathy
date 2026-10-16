@@ -1,0 +1,18 @@
+# Combined namespace + pod match in a single peer (Cilium's analog of Calico's
+# gnp-source-namespaceselector-and-selector): one fromEndpoints entry ANDs the
+# namespace label with a pod label, so only pods that are BOTH in namespace dev
+# AND labeled role=client are admitted to backend.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-from-dev-clients
+  namespace: prod
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dev
+            role: client

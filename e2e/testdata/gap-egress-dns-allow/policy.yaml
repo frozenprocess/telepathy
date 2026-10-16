@@ -1,0 +1,29 @@
+# Default-deny with a DNS egress carve-out (Cilium's analog of Calico's
+# default-deny-all-namespaces-but-dns-calico). Calico applies a GNP to every
+# namespace except the system ones (namespaceSelector `... not in {...}`) and
+# opens egress to k8s-app==kube-dns:53. Cilium has no namespaceSelector on the
+# subject; on a CiliumClusterwideNetworkPolicy the endpointSelector can instead
+# match the projected namespace label io.kubernetes.pod.namespace and exclude
+# dns-system with NotIn — the same effect.
+#
+# The DNS peer is matched by pod label (k8s-app=kube-dns). Parity note: Cilium
+# also has a richer L7 DNS option (toFQDNs / toPorts.rules.dns), but for a pure
+# L3/L4 reachability comparison we mirror Calico's L4 allow (port 53) exactly.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: default-deny-but-dns
+spec:
+  endpointSelector:
+    matchExpressions:
+      - {key: k8s:io.kubernetes.pod.namespace, operator: NotIn, values: [dns-system]}
+  ingressDeny:
+    - {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}

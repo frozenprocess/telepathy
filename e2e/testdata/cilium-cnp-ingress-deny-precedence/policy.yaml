@@ -1,0 +1,21 @@
+# Cilium Deny Policies (docs.cilium.io "Deny Policies"): deny takes precedence
+# over allow. backend allows ingress from the whole team (team=a), but an
+# ingressDeny carves out role=other. Because deny wins, the broad allow lets
+# frontend in while other is still blocked — deny overriding a matching allow.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-team-deny-other
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            team: a
+  ingressDeny:
+    - fromEndpoints:
+        - matchLabels:
+            role: other

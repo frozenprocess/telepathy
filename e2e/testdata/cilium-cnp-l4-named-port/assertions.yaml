@@ -1,0 +1,19 @@
+assertions:
+  - name: frontend reaches backend's named http port (8080)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+    protocol: tcp
+    port: 8080
+  - name: frontend is denied on backend's other port (9090, not the named port)
+    from: demo/frontend
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 9090
+  - name: other is denied on the named port (peer label doesn't match)
+    from: demo/other
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 8080

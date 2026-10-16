@@ -1,0 +1,17 @@
+# Cilium egress, endpoints-based: selecting frontend with an egress rule makes
+# frontend default-deny for egress, then allows it to reach only role=backend.
+# A flow must clear BOTH the source's egress and the destination's ingress, so
+# this constrains where frontend may initiate connections.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: frontend-egress-to-backend
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: frontend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            role: backend

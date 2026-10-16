@@ -1,0 +1,5 @@
+assertions:
+  - {name: intra-namespace denied, from: prod/frontend, to: prod/backend, expect: deny}
+  - {name: cross-namespace denied, from: dev/frontend,  to: prod/backend, expect: deny}
+  - {name: egress also denied,     from: prod/backend,  to: dev/backend,  expect: deny}
+  - {name: reverse denied,         from: dev/backend,   to: prod/frontend, expect: deny}

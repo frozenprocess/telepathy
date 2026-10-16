@@ -1,0 +1,19 @@
+assertions:
+  - name: frontend reaches backend on a port inside the range (8085)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+    protocol: tcp
+    port: 8085
+  - name: frontend is denied on a port outside the range (9090)
+    from: demo/frontend
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 9090
+  - name: other is denied inside the range (peer label doesn't match)
+    from: demo/other
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 8085

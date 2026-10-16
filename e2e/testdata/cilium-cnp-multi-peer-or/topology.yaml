@@ -1,0 +1,31 @@
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+endpoints:
+  - id: demo/frontend
+    namespace: demo
+    name: frontend
+    ip: 10.0.0.1
+    labels: {role: frontend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: demo/api
+    namespace: demo
+    name: api
+    ip: 10.0.0.2
+    labels: {role: api}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.3
+    labels: {role: backend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: demo/other
+    namespace: demo
+    name: other
+    ip: 10.0.0.4
+    labels: {role: other}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+port: 8080
+protocol: tcp

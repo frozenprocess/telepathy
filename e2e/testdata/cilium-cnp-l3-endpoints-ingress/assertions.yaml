@@ -1,0 +1,17 @@
+assertions:
+  - name: frontend may reach backend (matches the ingress rule)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: other is denied by backend's default-deny (no matching rule)
+    from: demo/other
+    to: demo/backend
+    expect: deny
+  - name: backend as a source is unrestricted (policy only governs its ingress)
+    from: demo/backend
+    to: demo/frontend
+    expect: allow
+  - name: other is not selected by any policy, so its ingress is open
+    from: demo/frontend
+    to: demo/other
+    expect: allow

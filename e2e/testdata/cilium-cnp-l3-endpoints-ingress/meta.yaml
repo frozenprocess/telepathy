@@ -1,0 +1,3 @@
+# cilium-flavored case: only the cilium engine evaluates CiliumNetworkPolicy.
+# Runs under `make verify-all PROVIDER=cilium` (skipped for calico/antrea).
+flavor: cilium

@@ -1,0 +1,15 @@
+# CiliumClusterwideNetworkPolicy: like a CNP but cluster-scoped (no namespace,
+# no per-namespace endpointSelector scoping). It selects role=backend in EVERY
+# namespace and allows ingress from role=frontend anywhere in the cluster.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: backend-allow-frontend-clusterwide
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend

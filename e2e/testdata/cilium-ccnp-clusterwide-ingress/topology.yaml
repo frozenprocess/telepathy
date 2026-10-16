@@ -1,0 +1,37 @@
+# Two namespaces. backend lives in ns1; frontends live in both ns1 and ns2.
+# A clusterwide policy selects backend regardless of namespace and admits
+# frontend from any namespace — demonstrating cluster scope (cross-namespace).
+namespaces:
+  - name: ns1
+    labels:
+      kubernetes.io/metadata.name: ns1
+  - name: ns2
+    labels:
+      kubernetes.io/metadata.name: ns2
+endpoints:
+  - id: ns1/backend
+    namespace: ns1
+    name: backend
+    ip: 10.0.0.1
+    labels: {role: backend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: ns1/frontend
+    namespace: ns1
+    name: frontend
+    ip: 10.0.0.2
+    labels: {role: frontend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: ns2/frontend
+    namespace: ns2
+    name: frontend
+    ip: 10.0.0.3
+    labels: {role: frontend}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+  - id: ns2/other
+    namespace: ns2
+    name: other
+    ip: 10.0.0.4
+    labels: {role: other}
+    ports: [{name: http, port: 8080, protocol: tcp}]
+port: 8080
+protocol: tcp

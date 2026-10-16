@@ -1,0 +1,13 @@
+assertions:
+  - name: frontend egress to backend is allowed (team=a, not denied)
+    from: demo/frontend
+    to: demo/backend
+    expect: allow
+  - name: other is unrestricted as a source (no policy selects its egress)
+    from: demo/other
+    to: demo/backend
+    expect: allow
+  - name: frontend cannot egress to other (deny precedence)
+    from: demo/frontend
+    to: demo/other
+    expect: deny

@@ -1,0 +1,22 @@
+# ICMP type matching (Cilium's analog of Calico's icmp `type: 8` rules). Calico
+# expresses this as `protocol: ICMP` + `icmp: {type: 8}`; Cilium uses a dedicated
+# `icmps` section with ICMPFields (type may be the int 8 or the name EchoRequest).
+# Only ICMP echo-request ingress to the receiver is allowed; TCP falls through to
+# the receiver's default-deny.
+#
+# Parity note: on LINUX this is a true parity (both engines honour the ICMP type).
+# Calico's Windows cases (windows-icmp-type-drop / -deny-bypass) capture an
+# HNS-dataplane divergence that is Calico-specific and has no Cilium analog.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: receiver-allow-icmp-echo-only
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: receiver
+  ingress:
+    - icmps:
+        - fields:
+            - {type: 8, family: IPv4}

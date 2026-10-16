@@ -1,0 +1,20 @@
+# Label-PRESENCE selection (Cilium's analog of Calico's gnp-selector-has, which
+# uses the has(env) match operator). Calico's `has(key)` maps to a Kubernetes
+# LabelSelector Exists expression. A CiliumClusterwideNetworkPolicy selects every
+# endpoint that carries an `env` label regardless of value and default-denies its
+# ingress (ingressDeny: [{}] — deny from all sources). The platform pod has no
+# `env` label, so it is not selected and stays open.
+#
+# Parity note: this is a FULL parity with Calico — Exists is the exact analog of
+# has(). (What Cilium CANNOT do is glob matching on the label VALUE, e.g. Calico's
+# `app starts with 'data'` — see selector-starts-with, which has no Cilium case.)
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: deny-ingress-all-labelled-workloads
+spec:
+  endpointSelector:
+    matchExpressions:
+      - {key: env, operator: Exists}
+  ingressDeny:
+    - {}

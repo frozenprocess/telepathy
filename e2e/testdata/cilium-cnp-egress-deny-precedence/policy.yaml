@@ -1,0 +1,21 @@
+# Egress deny precedence (Cilium's analog of Calico's gnp-egress-explicit-deny-
+# then-allow): frontend is allowed to egress to the whole team, but an egressDeny
+# carves out role=other. Deny wins over allow, so frontend reaches backend but
+# not other.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: frontend-egress-team-deny-other
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: frontend
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            team: a
+  egressDeny:
+    - toEndpoints:
+        - matchLabels:
+            role: other

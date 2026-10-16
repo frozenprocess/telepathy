@@ -1,0 +1,21 @@
+# Port-range L4 (Cilium's analog of Calico's gnp-port-range): a toPorts entry
+# with endPort matches a contiguous range. frontend may reach backend on
+# 8080-8090; a port outside the range is denied by backend's default-deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-frontend-range
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: frontend
+      toPorts:
+        - ports:
+            - port: "8080"
+              endPort: 8090
+              protocol: TCP

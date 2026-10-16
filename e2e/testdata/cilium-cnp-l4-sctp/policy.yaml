@@ -1,0 +1,16 @@
+# SCTP L4 (Cilium's analog of Calico's gnp-sctp-port). Contrary to a common
+# reading of the docs, Cilium's PortProtocol enum has accepted SCTP since well
+# before v1.20 (TCP;UDP;SCTP;VRRP;IGMP;ANY), and the engine evaluates it. Only
+# frontend may reach backend on SCTP/9000; every other source hits default-deny.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-sctp
+  namespace: demo
+spec:
+  endpointSelector: {matchLabels: {role: backend}}
+  ingress:
+    - fromEndpoints: [{matchLabels: {role: frontend}}]
+      toPorts:
+        - ports:
+            - {port: "9000", protocol: SCTP}

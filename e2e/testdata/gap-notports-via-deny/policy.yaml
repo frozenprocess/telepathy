@@ -1,0 +1,23 @@
+# "Allow every port except one" (Cilium's OUTCOME analog of Calico's
+# gnp-notports-ingress). Calico has a first-class negated match:
+# `destination.notPorts: [8080]` on an Allow rule opens all ports but 8080.
+# Cilium has NO notPorts field, so parity is only reachable by composition:
+# an ingress allow (all L4) plus an ingressDeny on the excluded port. Deny wins
+# globally (Cilium's fixed deny-over-allow precedence), so 8080 is blocked and
+# every other port is open — the same connectivity, expressed differently.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-all-tcp-except-8080
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - {}
+  ingressDeny:
+    - toPorts:
+        - ports:
+            - {port: "8080", protocol: TCP}

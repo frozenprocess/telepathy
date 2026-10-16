@@ -1,0 +1,14 @@
+# Two namespaces, four pods — nothing may talk to anything once the cluster-wide
+# deny lands.
+namespaces:
+  - name: prod
+    labels: {kubernetes.io/metadata.name: prod}
+  - name: dev
+    labels: {kubernetes.io/metadata.name: dev}
+endpoints:
+  - {id: prod/frontend, namespace: prod, name: frontend, ip: 10.0.0.1, labels: {role: frontend}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: prod/backend,  namespace: prod, name: backend,  ip: 10.0.0.2, labels: {role: backend},  ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: dev/frontend,  namespace: dev,  name: frontend, ip: 10.0.0.3, labels: {role: frontend}, ports: [{name: http, port: 8080, protocol: tcp}]}
+  - {id: dev/backend,   namespace: dev,  name: backend,  ip: 10.0.0.4, labels: {role: backend},  ports: [{name: http, port: 8080, protocol: tcp}]}
+port: 8080
+protocol: tcp

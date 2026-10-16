@@ -1,0 +1,16 @@
+# Negated set-based selector (Cilium's analog of Calico's gnp-notselector /
+# gnp-selector-negation): backend admits every peer EXCEPT those with role=other,
+# expressed with a NotIn matchExpression.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backend-allow-except-other
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: backend
+  ingress:
+    - fromEndpoints:
+        - matchExpressions:
+            - {key: role, operator: NotIn, values: [other]}

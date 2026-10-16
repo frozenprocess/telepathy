@@ -1,0 +1,13 @@
+assertions:
+  - name: dev + client matches both requirements — allowed
+    from: dev/client
+    to: prod/backend
+    expect: allow
+  - name: dev but wrong role (other) — denied
+    from: dev/other
+    to: prod/backend
+    expect: deny
+  - name: client but wrong namespace (prod) — denied
+    from: prod/client
+    to: prod/backend
+    expect: deny

@@ -1,0 +1,8 @@
+namespaces:
+  - {name: demo, labels: {kubernetes.io/metadata.name: demo}}
+endpoints:
+  - {id: demo/frontend, namespace: demo, name: frontend, ip: 10.0.0.1, labels: {role: frontend}, ports: [{name: sctp, port: 9000, protocol: sctp}]}
+  - {id: demo/backend,  namespace: demo, name: backend,  ip: 10.0.0.2, labels: {role: backend},  ports: [{name: sctp, port: 9000, protocol: sctp}]}
+  - {id: demo/other,    namespace: demo, name: other,    ip: 10.0.0.3, labels: {role: other},    ports: [{name: sctp, port: 9000, protocol: sctp}]}
+port: 9000
+protocol: sctp

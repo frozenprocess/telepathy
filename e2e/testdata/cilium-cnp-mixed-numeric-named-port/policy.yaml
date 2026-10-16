@@ -1,0 +1,16 @@
+# Cilium half of the mixed numeric+named port pair: a toPorts entry listing both
+# a numeric port (80) and a named port (web). Cilium resolves the named port and
+# allows both legs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: mixed-numeric-named, namespace: demo}
+spec:
+  endpointSelector:
+    matchLabels: {role: backend}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {role: frontend}
+      toPorts:
+        - ports:
+            - {port: "80",  protocol: TCP}
+            - {port: "web", protocol: TCP}
