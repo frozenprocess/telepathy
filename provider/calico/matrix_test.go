@@ -48,6 +48,8 @@ func TestMatrixModesAgree(t *testing.T) {
 				t.Fatal(err)
 			}
 			compare := func(req Request) Response {
+				selected := req.MatrixPairs
+				req.MatrixPairs = nil
 				t.Setenv("TELEPATHY_NO_COLLAPSE", "1")
 				want := Evaluate(req)
 				t.Setenv("TELEPATHY_NO_COLLAPSE", "")
@@ -79,6 +81,26 @@ func TestMatrixModesAgree(t *testing.T) {
 					}
 					if !reflect.DeepEqual(streamed, want) {
 						t.Fatalf("streaming differs from exact\ngot: %+v\nwant: %+v", streamed, want)
+					}
+				}
+				if len(selected) > 0 {
+					req.MatrixSink = nil
+					req.MatrixPairs = selected
+					sparse := Evaluate(req)
+					expected := make(map[string]string)
+					for _, pair := range selected {
+						key := pair.From + "->" + pair.To
+						if value, ok := want.Matrix[key]; ok {
+							expected[key] = value
+						}
+					}
+					if !reflect.DeepEqual(sparse.Matrix, expected) {
+						t.Fatalf("partial matrix = %v, want %v", sparse.Matrix, expected)
+					}
+					for _, actor := range sparse.Actors {
+						if actor.Internet != "" {
+							t.Fatal("partial matrix claims complete internet posture")
+						}
 					}
 				}
 				return want

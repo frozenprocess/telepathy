@@ -65,6 +65,19 @@ path for any topology. Output still contains every ordered pair.
 ### 2. `test` — assertions as a CI gate
 Write expectations next to your policies and let Telepathy enforce them. Exit code is non-zero when any assertion fails.
 
+`test` requests only asserted pairs, grouped by port/protocol, in Calico, Cilium,
+and Antrea. The full topology still participates in policy matching, but the
+engine avoids checking and returning unrelated flows. Rebuild the external
+Cilium/Antrea engine binaries to enable this optimization; older binaries still
+work but compute the full matrix. Full-matrix evaluation remains the default
+outside `test`.
+
+API callers can set `matrixPairs: [{from: "demo/frontend", to: "demo/backend"}]`
+for the same optimization. An empty selection requests the full matrix. Unknown
+endpoints and self-pairs are absent. Calico resolves service destinations on
+demand and leaves `Actors[].Internet` unset for partial matrices because those
+results cannot establish a complete internet posture.
+
 ```yaml
 # telepathy.tests.yaml
 assertions:

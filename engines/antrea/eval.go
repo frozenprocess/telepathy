@@ -45,17 +45,13 @@ func evaluate(req api.Request) api.Response {
 		port = 8080
 	}
 
-	for _, src := range req.Endpoints {
-		for _, dst := range req.Endpoints {
-			if src.ID == dst.ID {
-				continue
-			}
-			verdict := "deny"
-			if m.ingressAllows(dst, src, proto, port) && m.egressAllows(src, dst, proto, port) {
-				verdict = "allow"
-			}
-			resp.Matrix[src.ID+"->"+dst.ID] = verdict
+	for i, j := range api.EndpointPairs(req.Endpoints, req.MatrixPairs) {
+		src, dst := req.Endpoints[i], req.Endpoints[j]
+		verdict := "deny"
+		if m.ingressAllows(dst, src, proto, port) && m.egressAllows(src, dst, proto, port) {
+			verdict = "allow"
 		}
+		resp.Matrix[src.ID+"->"+dst.ID] = verdict
 	}
 
 	resp.Actors = make([]api.Actor, 0, len(req.Endpoints))

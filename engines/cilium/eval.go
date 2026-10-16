@@ -163,28 +163,24 @@ func evaluate(req api.Request) api.Response {
 		port = 8080
 	}
 
-	for i, src := range req.Endpoints {
-		for j, dst := range req.Endpoints {
-			if src.ID == dst.ID {
-				continue
-			}
-			flow := policytypes.Flow{
-				From:          idents[i],
-				To:            idents[j],
-				Proto:         proto,
-				Dport:         uint16(port),
-				NamedPortsTCP: namedTCP[j],
-				NamedPortsUDP: namedUDP[j],
-			}
-			verdict := "deny"
-			if v, _, _, err := policy.LookupFlow(logger, repo, idmgr, flow); err != nil {
-				resp.Warnings = append(resp.Warnings,
-					fmt.Sprintf("cilium provider: %s->%s lookup: %v", src.ID, dst.ID, err))
-			} else if v.Allowed() {
-				verdict = "allow"
-			}
-			resp.Matrix[src.ID+"->"+dst.ID] = verdict
+	for i, j := range api.EndpointPairs(req.Endpoints, req.MatrixPairs) {
+		src, dst := req.Endpoints[i], req.Endpoints[j]
+		flow := policytypes.Flow{
+			From:          idents[i],
+			To:            idents[j],
+			Proto:         proto,
+			Dport:         uint16(port),
+			NamedPortsTCP: namedTCP[j],
+			NamedPortsUDP: namedUDP[j],
 		}
+		verdict := "deny"
+		if v, _, _, err := policy.LookupFlow(logger, repo, idmgr, flow); err != nil {
+			resp.Warnings = append(resp.Warnings,
+				fmt.Sprintf("cilium provider: %s->%s lookup: %v", src.ID, dst.ID, err))
+		} else if v.Allowed() {
+			verdict = "allow"
+		}
+		resp.Matrix[src.ID+"->"+dst.ID] = verdict
 	}
 
 	resp.Actors = make([]api.Actor, 0, len(req.Endpoints))

@@ -259,6 +259,13 @@ type Request struct {
 	// values / engines fall back to their default or omit Dataplane.
 	CostDataplane string `json:"costDataplane,omitempty"`
 
+	// MatrixPairs limits evaluation to these ordered flows when nonempty.
+	// The complete topology still participates in policy/selector resolution.
+	// Unknown endpoints and self-pairs are omitted. Calico also resolves service
+	// destinations, but omits Internet posture in Actors for a partial matrix.
+	// Empty means the full matrix. Older providers may return the full matrix.
+	MatrixPairs []MatrixPair `json:"matrixPairs,omitempty"`
+
 	// MatrixSink optionally receives "src->dst\tverdict\n" lines instead of
 	// Response.Matrix. Supporting providers retain only columns needed for
 	// post-processing; memory still depends on the number of those columns.

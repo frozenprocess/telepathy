@@ -18,6 +18,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/frozenprocess/telepathy/api"
@@ -156,6 +157,14 @@ spec:
 				t.Fatalf("errors: %v", resp.Errors)
 			}
 			for flow, want := range tc.want {
+				from, to, _ := strings.Cut(flow, "->")
+				selected := tc.req
+				selected.MatrixPairs = []api.MatrixPair{{From: from, To: to}, {From: "missing", To: to}, {From: from, To: from}}
+				partial := evaluate(selected)
+				if len(partial.Matrix) != 1 || partial.Matrix[flow] != want {
+					t.Fatalf("partial matrix: %v, want %s=%s", partial.Matrix, flow, want)
+				}
+
 				if got := resp.Matrix[flow]; got != want {
 					t.Errorf("%s: got %q, want %q", flow, got, want)
 				}

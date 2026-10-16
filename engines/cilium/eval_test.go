@@ -18,6 +18,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/frozenprocess/telepathy/api"
@@ -71,6 +72,14 @@ func TestEvaluateIngressIsolation(t *testing.T) {
 			t.Fatalf("port %d: unexpected errors: %v", tc.port, resp.Errors)
 		}
 		for k, want := range tc.want {
+			from, to, _ := strings.Cut(k, "->")
+			selected := req
+			selected.MatrixPairs = []api.MatrixPair{{From: from, To: to}, {From: "missing", To: to}, {From: from, To: from}}
+			partial := evaluate(selected)
+			if len(partial.Matrix) != 1 || partial.Matrix[k] != want {
+				t.Fatalf("partial matrix: %v, want %s=%s", partial.Matrix, k, want)
+			}
+
 			if got := resp.Matrix[k]; got != want {
 				t.Errorf("port %d: %s = %q, want %q", tc.port, k, got, want)
 			}

@@ -137,7 +137,9 @@ func Evaluate(req Request) Response {
 	}
 	sink := newMatrixSink(req.MatrixSink, keep)
 
-	if len(actors.hepsByNode) == 0 && os.Getenv("TELEPATHY_NO_COLLAPSE") == "" {
+	if len(req.MatrixPairs) > 0 {
+		fillMatrixPairs(sink, req, actors, store, mkFlow)
+	} else if len(actors.hepsByNode) == 0 && os.Getenv("TELEPATHY_NO_COLLAPSE") == "" {
 		// No HostEndpoint overlays: the verdict is egress(src) AND ingress(dst),
 		// each a pure function of (owner policy, IP-membership answers). Collapse
 		// interchangeable endpoints into classes and run the checker once per
@@ -168,8 +170,10 @@ func Evaluate(req Request) Response {
 		}
 	}
 
-	addServiceColumns(sink, req, actors)
-	buildActorReport(&resp, sink, actors)
+	if len(req.MatrixPairs) == 0 {
+		addServiceColumns(sink, req, actors)
+	}
+	buildActorReport(&resp, sink, actors, len(req.MatrixPairs) == 0)
 
 	if err := sink.flush(); err != nil {
 		resp.Errors = append(resp.Errors, fmt.Sprintf("stream matrix: %v", err))
@@ -353,7 +357,7 @@ func actorKindString(a *actor) string {
 // if it reaches any external actor, deny if none, "" when there are no externals
 // or the actor is itself external). Read-only over the retained matrix — must run after
 // the matrix loop.
-func buildActorReport(resp *Response, sink *matrixSink, actors actorBundle) {
+func buildActorReport(resp *Response, sink *matrixSink, actors actorBundle, complete bool) {
 	var externals []*actor
 	for _, a := range actors.list {
 		if actorKindString(a) == "external" {
@@ -363,7 +367,7 @@ func buildActorReport(resp *Response, sink *matrixSink, actors actorBundle) {
 	for _, a := range actors.list {
 		kind := actorKindString(a)
 		internet := ""
-		if kind != "external" && len(externals) > 0 {
+		if complete && kind != "external" && len(externals) > 0 {
 			internet = "deny"
 			for _, e := range externals {
 				if sink.get(a.id, e.id) == "allow" {

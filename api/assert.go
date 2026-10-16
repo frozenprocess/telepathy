@@ -117,9 +117,9 @@ func DecodeAssertions(data []byte) ([]Assertion, error) {
 // RunAssertions evaluates req's topology against the given assertions and
 // reports which held. Because the connectivity matrix is computed for a single
 // (port, protocol) probe, assertions are grouped by their effective probe —
-// each distinct (port, protocol) triggers exactly one Evaluate over a clone of
-// req, so a test file spanning many ports stays correct without N full sweeps
-// per assertion. Engine errors/warnings are collected across groups and
+// each distinct (port, protocol) triggers one Evaluate over the complete
+// topology, requesting only the pairs in that group. Providers supporting
+// MatrixPairs avoid materializing an entire matrix for a handful of assertions. Engine errors/warnings are collected across groups and
 // deduplicated.
 //
 // req is not mutated; each group runs on a shallow copy with Port/Protocol
@@ -165,6 +165,11 @@ func RunAssertions(eval func(Request) Response, req Request, assertions []Assert
 		probeReq.MatrixSink = nil // Assertions need the in-memory matrix.
 		probeReq.Port = k.port
 		probeReq.Protocol = k.proto
+		probeReq.MatrixPairs = make([]MatrixPair, 0, len(idxByProbe[k]))
+		for _, i := range idxByProbe[k] {
+			a := assertions[i]
+			probeReq.MatrixPairs = append(probeReq.MatrixPairs, MatrixPair{From: a.From, To: a.To})
+		}
 		resp := eval(probeReq)
 
 		for _, e := range resp.Errors {
