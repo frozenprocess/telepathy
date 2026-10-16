@@ -162,6 +162,7 @@ func RunAssertions(eval func(Request) Response, req Request, assertions []Assert
 
 	for _, k := range probes {
 		probeReq := req
+		probeReq.MatrixSink = nil // Assertions need the in-memory matrix.
 		probeReq.Port = k.port
 		probeReq.Protocol = k.proto
 		resp := eval(probeReq)
@@ -184,14 +185,24 @@ func RunAssertions(eval func(Request) Response, req Request, assertions []Assert
 		}
 	}
 
-	for _, r := range report.Results {
-		if r.Pass {
-			report.Passed++
-		} else {
-			report.Failed++
+	return summarizeAssertions(report)
+}
+
+// RunAssertionsOnMatrix checks assertions against an already-computed matrix
+// (e.g. one streamed to disk by the CLI's -matrix-out) instead of re-evaluating.
+// The matrix is a single probe, so per-assertion port/protocol overrides are
+// ignored — every assertion is gated against the matrix as given.
+func RunAssertionsOnMatrix(matrix map[string]string, assertions []Assertion) AssertionReport {
+	var report AssertionReport
+	report.Results = make([]AssertionResult, len(assertions))
+	for i, a := range assertions {
+		if res, bad := validateAssertion(a); bad {
+			report.Results[i] = res
+			continue
 		}
+		report.Results[i] = checkAssertion(a, matrix)
 	}
-	return report
+	return summarizeAssertions(report)
 }
 
 // validateAssertion rejects a structurally invalid assertion before it reaches
@@ -250,4 +261,15 @@ func effectiveProto(a Assertion, req Request) string {
 		return req.Protocol
 	}
 	return "tcp"
+}
+
+func summarizeAssertions(report AssertionReport) AssertionReport {
+	for _, r := range report.Results {
+		if r.Pass {
+			report.Passed++
+		} else {
+			report.Failed++
+		}
+	}
+	return report
 }

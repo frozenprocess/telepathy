@@ -44,6 +44,20 @@ The engine is a stdin → stdout filter: a topology Request goes in, a JSON conn
 ### 1. `evaluate` (default) — the connectivity matrix
 Probe every ordered pod pair at a port/protocol. A pair is `allow` only if it clears **both** the source's egress and the destination's ingress — exactly how a real packet has to pass.
 
+For large topologies, write the matrix to a separate TSV file:
+
+```bash
+telepathy -matrix-out matrix.tsv -policy ./policies < topology.yaml > response.json
+telepathy test -matrix-in matrix.tsv -assert telepathy.tests.yaml
+```
+
+Each line is `src->dst<TAB>allow|deny`; the JSON response contains `matrix: null`.
+Calico streams directly, retaining columns needed for service and external-actor
+reports. Other providers fall back to writing their in-memory matrix. Memory
+savings depend on the number of retained columns. `-matrix-in` retains only
+asserted pairs and uses the file's single probe; assertion port/protocol overrides
+are ignored. Check the evaluation response for errors before reusing the file.
+
 ### 2. `test` — assertions as a CI gate
 Write expectations next to your policies and let Telepathy enforce them. Exit code is non-zero when any assertion fails.
 

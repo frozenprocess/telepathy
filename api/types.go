@@ -30,6 +30,8 @@
 // singletons), so callers in shared-process environments must serialise calls.
 package api
 
+import "io"
+
 // Capability describes one policy feature or resource kind a provider honors.
 // A provider returns its set from Provider.Capabilities; callers (and lint) use
 // it to discover the feature surface before trusting a verdict. The shape is
@@ -256,6 +258,14 @@ type Request struct {
 	// Cost.Dataplane. Calico honours "iptables" (default) and "bpf"; other
 	// values / engines fall back to their default or omit Dataplane.
 	CostDataplane string `json:"costDataplane,omitempty"`
+
+	// MatrixSink optionally receives "src->dst\tverdict\n" lines instead of
+	// Response.Matrix. Supporting providers retain only columns needed for
+	// post-processing; memory still depends on the number of those columns.
+	// Providers that ignore it return a matrix for the caller to write instead.
+	// Write errors are reported in Response.Errors. This writer is in-process
+	// only and is never serialized.
+	MatrixSink io.Writer `json:"-"`
 }
 
 // Response is the connectivity matrix. Keys are "src.ID->dst.ID"; values are

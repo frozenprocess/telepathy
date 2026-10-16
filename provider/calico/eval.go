@@ -65,7 +65,10 @@ func Evaluate(req Request) Response {
 		req.SrcPort = 12345
 	}
 
-	resp := Response{Matrix: map[string]string{}}
+	resp := Response{}
+	if req.MatrixSink == nil {
+		resp.Matrix = map[string]string{}
+	}
 
 	// Pull any pasted ServiceAccount/Service manifests out of Policies into the
 	// typed slices before anything reads the Request (lint, buildGraph, and the
@@ -125,6 +128,15 @@ func Evaluate(req Request) Response {
 
 	mkFlow := flowFactory(req)
 
+	// When streaming, keep resident only the columns the post-processors read
+	// back: external actors (buildActorReport) and Service backends
+	// (addServiceColumns). Everything else goes to disk and is dropped from RAM.
+	var keep map[string]bool
+	if req.MatrixSink != nil {
+		keep = matrixKeepSet(req, actors)
+	}
+	sink := newMatrixSink(req.MatrixSink, keep)
+
 	for _, src := range actors.list {
 		for _, dst := range actors.list {
 			if src.id == dst.id {
@@ -136,12 +148,22 @@ func Evaluate(req Request) Response {
 			if allow {
 				res = "allow"
 			}
-			resp.Matrix[src.id+"->"+dst.id] = res
+			sink.put(src.id, dst.id, res)
 		}
 	}
 
-	addServiceColumns(&resp, req, actors)
-	buildActorReport(&resp, actors)
+	addServiceColumns(sink, req, actors)
+	buildActorReport(&resp, sink, actors)
+
+	if err := sink.flush(); err != nil {
+		resp.Errors = append(resp.Errors, fmt.Sprintf("stream matrix: %v", err))
+	}
+	// In-memory mode: hand the full map to the Response. Streaming mode: the
+	// matrix is on disk and sink.m holds only the kept columns, so leave
+	// Response.Matrix nil — that's also how the CLI knows the sink was honoured.
+	if req.MatrixSink == nil {
+		resp.Matrix = sink.m
+	}
 
 	// Policy-efficiency cost: the portable structural+hygiene layer plus
 	// Calico's exact compiled dataplane weight. Only when asked, since the
@@ -313,9 +335,9 @@ func actorKindString(a *actor) string {
 // buildActorReport fills resp.Actors: one typed entry per matrix row/col, in
 // matrix order, plus each actor's internet-egress posture for this probe (allow
 // if it reaches any external actor, deny if none, "" when there are no externals
-// or the actor is itself external). Read-only over resp.Matrix — must run after
+// or the actor is itself external). Read-only over the retained matrix — must run after
 // the matrix loop.
-func buildActorReport(resp *Response, actors actorBundle) {
+func buildActorReport(resp *Response, sink *matrixSink, actors actorBundle) {
 	var externals []*actor
 	for _, a := range actors.list {
 		if actorKindString(a) == "external" {
@@ -328,7 +350,7 @@ func buildActorReport(resp *Response, actors actorBundle) {
 		if kind != "external" && len(externals) > 0 {
 			internet = "deny"
 			for _, e := range externals {
-				if resp.Matrix[a.id+"->"+e.id] == "allow" {
+				if sink.get(a.id, e.id) == "allow" {
 					internet = "allow"
 					break
 				}
@@ -364,7 +386,7 @@ func buildActorReport(resp *Response, actors actorBundle) {
 // the ClusterIP itself (e.g. destination.nets:[<clusterIP>/32]) is NOT modelled
 // — that's not how kube-proxy'd traffic is typically policed; supply the
 // Service selector instead.
-func addServiceColumns(resp *Response, req Request, actors actorBundle) {
+func addServiceColumns(sink *matrixSink, req Request, actors actorBundle) {
 	if len(req.Services) == 0 {
 		return
 	}
@@ -383,7 +405,7 @@ func addServiceColumns(resp *Response, req Request, actors actorBundle) {
 				// A pod that itself backs the Service can reach it: the flow
 				// hairpins to the local pod, so at least one endpoint (itself)
 				// is trivially reachable. Otherwise OR the pod-to-pod verdict.
-				if b == src.id || resp.Matrix[src.id+"->"+b] == "allow" {
+				if b == src.id || sink.get(src.id, b) == "allow" {
 					allow = true
 					break
 				}
@@ -392,7 +414,7 @@ func addServiceColumns(resp *Response, req Request, actors actorBundle) {
 			if allow {
 				res = "allow"
 			}
-			resp.Matrix[src.id+"->"+col] = res
+			sink.put(src.id, col, res)
 		}
 	}
 }

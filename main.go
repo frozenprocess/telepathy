@@ -199,6 +199,8 @@ func printHelp() {
 	fmt.Printf("  -provider NAME     select the CNI engine (have: %s; default %s)\n",
 		strings.Join(provider.List(), ", "), defaultProvider)
 	fmt.Println()
+	fmt.Println("Evaluation flag: -matrix-out FILE writes the matrix as TSV (JSON matrix is null).")
+	fmt.Println()
 	fmt.Println("Run `telepathy <subcommand> -h` for a subcommand's own flags.")
 }
 
@@ -255,15 +257,44 @@ func main() {
 
 	fs := flag.NewFlagSet("telepathy", flag.ExitOnError)
 	fs.Usage = printHelp
+	matrixOut := fs.String("matrix-out", "", "stream the matrix to FILE as TSV (\"src->dst\\tverdict\") instead of embedding it in the JSON response — reduces matrix memory for large topologies")
 	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	p := mustProvider(*prov)
 	req := loadRequest(*policies)
+
+	var mf *os.File
+	if *matrixOut != "" {
+		var err error
+		if mf, err = os.Create(*matrixOut); err != nil {
+			fail("create %s: %v", *matrixOut, err)
+		}
+		defer mf.Close()
+		req.MatrixSink = mf
+	}
+
 	resp := p.Evaluate(req)
 	if req.Cost {
 		resp.Cost = costOrFallback(resp.Cost, req, *prov)
 	}
+
+	if mf != nil {
+		// A provider that honoured the sink streamed the matrix and left
+		// resp.Matrix nil. One that ignored it leaves the full map — dump it so
+		// -matrix-out always yields the file. Either way drop it from the JSON
+		// so stdout stays small.
+		if resp.Matrix != nil {
+			if err := writeMatrixTSV(mf, resp.Matrix); err != nil {
+				fail("write %s: %v", *matrixOut, err)
+			}
+			resp.Matrix = nil
+		}
+		if err := mf.Close(); err != nil {
+			fail("close %s: %v", *matrixOut, err)
+		}
+	}
+
 	if err := json.NewEncoder(os.Stdout).Encode(resp); err != nil {
 		fail("encode response: %v", err)
 	}
@@ -761,6 +792,7 @@ func formatHNSRule(r calico.HNSRule) string {
 func runTest(args []string) {
 	fs := flag.NewFlagSet("test", flag.ExitOnError)
 	assertPath := fs.String("assert", "", "connectivity test file (YAML/JSON: a list of {from,to,expect[,port,protocol,name]}, or an `assertions:` key)")
+	matrixIn := fs.String("matrix-in", "", "gate against a pre-streamed matrix FILE (from -matrix-out) instead of re-evaluating — reads only the asserted pairs, so memory stays small (single-probe: per-assertion port/protocol is ignored)")
 	asJSON := fs.Bool("json", false, "emit the structured JSON AssertionReport instead of text")
 	policies, prov := addRequestFlags(fs)
 	_ = fs.Parse(args)
@@ -777,9 +809,16 @@ func runTest(args []string) {
 		fail("%v", err)
 	}
 
-	p := mustProvider(*prov)
-	req := loadRequest(*policies)
-	report := api.RunAssertions(p.Evaluate, req, assertions)
+	var report api.AssertionReport
+	if *matrixIn != "" {
+		if report, err = runAssertionsFromMatrixFile(*matrixIn, assertions); err != nil {
+			fail("%v", err)
+		}
+	} else {
+		p := mustProvider(*prov)
+		req := loadRequest(*policies)
+		report = api.RunAssertions(p.Evaluate, req, assertions)
+	}
 
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
