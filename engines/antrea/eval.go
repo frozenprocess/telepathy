@@ -30,6 +30,10 @@ import (
 // clears BOTH dst's ingress and src's egress (how a real packet must pass),
 // mirroring the Calico provider's two-sided model.
 func evaluate(req api.Request) api.Response {
+	return evaluateWithDefaults(req, true)
+}
+
+func evaluateWithDefaults(req api.Request, optimize bool) api.Response {
 	m := build(req)
 
 	resp := api.Response{Matrix: map[string]string{}}
@@ -45,10 +49,20 @@ func evaluate(req api.Request) api.Response {
 		port = 8080
 	}
 
+	var applicable []endpointPolicies
+	if optimize {
+		applicable = indexEndpointPolicies(m, req.Endpoints, proto, port)
+	}
 	for i, j := range api.EndpointPairs(req.Endpoints, req.MatrixPairs) {
 		src, dst := req.Endpoints[i], req.Endpoints[j]
 		verdict := "deny"
-		if m.ingressAllows(dst, src, proto, port) && m.egressAllows(src, dst, proto, port) {
+		allow := false
+		if optimize {
+			allow = applicable[j].ingress.allows(src, proto, port, dst) && applicable[i].egress.allows(dst, proto, port, dst)
+		} else {
+			allow = m.ingressAllows(dst, src, proto, port) && m.egressAllows(src, dst, proto, port)
+		}
+		if allow {
 			verdict = "allow"
 		}
 		resp.Matrix[src.ID+"->"+dst.ID] = verdict
