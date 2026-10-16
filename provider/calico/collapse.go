@@ -27,6 +27,7 @@ import (
 	"github.com/projectcalico/calico/app-policy/policystore"
 	"github.com/projectcalico/calico/felix/proto"
 	"github.com/projectcalico/calico/felix/rules"
+	"github.com/projectcalico/calico/felix/types"
 )
 
 // Equivalence-class collapse of the connectivity matrix.
@@ -133,6 +134,9 @@ func collectPeerProbes(store *policystore.PolicyStore, protoNum, srcPort, dstPor
 // in probe order, as a compact string usable as a map key. Two IPs with equal
 // sigs match identically in every rule's peer position.
 func (pp peerProbes) sig(store *policystore.PolicyStore, ip net.IP) string {
+	if len(pp.ipSetIDs)+len(pp.ipPortSetIDs)+len(pp.srcPortSetIDs)+len(pp.nets) == 0 {
+		return ""
+	}
 	var b strings.Builder
 	b.Grow(len(pp.ipSetIDs) + len(pp.ipPortSetIDs) + len(pp.nets))
 	ipStr := ip.String()
@@ -282,15 +286,14 @@ func evaluateClasses(store *policystore.PolicyStore, scope checker.PolicyScope, 
 	// egMemo[c*nPeer+p] = egress verdict when owner-class c is the SOURCE and
 	// peer-class p is the DEST. inMemo is the mirror for ingress (owner = dest,
 	// peer = source). Both reuse the real checker on class representatives.
-	walk := func(dir rules.RuleDir, a *actor, f *flow) bool {
-		trace, _ := checker.Evaluate(scope, dir, store, a.normalWEP(), f)
-		return verdict(trace)
-	}
 	egMemo := make([]bool, nClass*nPeer)
 	inMemo := make([]bool, nClass*nPeer)
 	for c := 0; c < nClass; c++ {
 		oc := repClass[c]
 		row := c * nPeer
+		probe := mkFlow(oc, oc)
+		egress := ownerDirectionEvaluator(store, scope, oc, rules.RuleDirEgress, probe)
+		ingress := ownerDirectionEvaluator(store, scope, oc, rules.RuleDirIngress, probe)
 		for p := 0; p < nPeer; p++ {
 			if oc.unpoliced {
 				egMemo[row+p] = true
@@ -298,10 +301,65 @@ func evaluateClasses(store *policystore.PolicyStore, scope checker.PolicyScope, 
 				continue
 			}
 			peer := repPeer[p]
-			egMemo[row+p] = walk(rules.RuleDirEgress, oc, mkFlow(oc, peer))
-			inMemo[row+p] = walk(rules.RuleDirIngress, oc, mkFlow(peer, oc))
+			egMemo[row+p] = egress(peer)
+			inMemo[row+p] = ingress(peer)
 		}
 	}
 
 	return egMemo, inMemo
+}
+
+// ownerDirectionEvaluator ignores probe distinctions introduced by policies
+// that do not apply to this owner/direction. A default or profile-only verdict
+// is then checked once, even if unrelated policies split peers into many classes.
+// The native checker still decides all tier, pass, staged, and profile behavior.
+func ownerDirectionEvaluator(store *policystore.PolicyStore, scope checker.PolicyScope, owner *actor, direction rules.RuleDir, probe *flow) func(*actor) bool {
+	probes := collectOwnerProbes(store, owner, direction, probe)
+	memo := map[string]bool{}
+	return func(peer *actor) bool {
+		signature := probes.sig(store, peer.ip)
+		if allow, ok := memo[signature]; ok {
+			return allow
+		}
+		f := *probe
+		if direction == rules.RuleDirIngress {
+			f.srcIP = peer.ip
+		} else {
+			f.dstIP = peer.ip
+		}
+		trace, _ := checker.Evaluate(scope, direction, store, owner.normalWEP(), &f)
+		allow := verdict(trace)
+		memo[signature] = allow
+		return allow
+	}
+}
+
+func collectOwnerProbes(store *policystore.PolicyStore, owner *actor, direction rules.RuleDir, probe *flow) peerProbes {
+	var relevant []*proto.Rule
+	inbound := direction == rules.RuleDirIngress
+	for _, tier := range owner.normalWEP().GetTiers() {
+		ids := tier.GetEgressPolicies()
+		if inbound {
+			ids = tier.GetIngressPolicies()
+		}
+		for _, id := range ids {
+			p := store.PolicyByID[types.ProtoToPolicyID(id)]
+			if inbound {
+				relevant = append(relevant, p.GetInboundRules()...)
+			} else {
+				relevant = append(relevant, p.GetOutboundRules()...)
+			}
+		}
+	}
+	for _, name := range owner.normalWEP().GetProfileIds() {
+		p := store.ProfileByID[types.ProfileID{Name: name}]
+		if inbound {
+			relevant = append(relevant, p.GetInboundRules()...)
+		} else {
+			relevant = append(relevant, p.GetOutboundRules()...)
+		}
+	}
+	// Reuse the membership-probe collector; no policy semantics are evaluated here.
+	subset := &policystore.PolicyStore{ProfileByID: map[types.ProfileID]*proto.Profile{{Name: "probes"}: {InboundRules: relevant}}}
+	return collectPeerProbes(subset, probe.protocol, probe.srcPort, probe.dstPort)
 }
