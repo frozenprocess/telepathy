@@ -195,7 +195,8 @@ func printHelp() {
 	fmt.Printf("  %-9s %s\n", "version", "print the engine version and available providers")
 	fmt.Println()
 	fmt.Println("Shared flags:")
-	fmt.Println("  -policy FILE|DIR   append policy manifest(s) to the stdin Request (repeatable)")
+	fmt.Println("  -topology FILE     read a YAML/JSON Request from FILE (default: stdin; - also uses stdin)")
+	fmt.Println("  -policy FILE|DIR   append policy manifest(s) to the Request (repeatable)")
 	fmt.Printf("  -provider NAME     select the CNI engine (have: %s; default %s)\n",
 		strings.Join(provider.List(), ", "), defaultProvider)
 	fmt.Println()
@@ -258,11 +259,11 @@ func main() {
 	fs := flag.NewFlagSet("telepathy", flag.ExitOnError)
 	fs.Usage = printHelp
 	matrixOut := fs.String("matrix-out", "", "stream the matrix to FILE as TSV (\"src->dst\\tverdict\") instead of embedding it in the JSON response — reduces matrix memory for large topologies")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(os.Args[1:])
 
 	p := mustProvider(*prov)
-	req := loadRequest(*policies)
+	req := loadRequest(*topology, *policies)
 
 	var mf *os.File
 	if *matrixOut != "" {
@@ -318,11 +319,11 @@ func runCost(args []string) {
 	fs := flag.NewFlagSet("cost", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "emit the structured JSON CostReport instead of text")
 	dataplane := fs.String("dataplane", "iptables", "dataplane to weigh for the exact cost: iptables | nftables | bpf | hns")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	p := mustProvider(*prov)
-	req := loadRequest(*policies)
+	req := loadRequest(*topology, *policies)
 	req.Cost = true
 	req.CostDataplane = *dataplane
 	report := costOrFallback(p.Evaluate(req).Cost, req, *prov)
@@ -372,25 +373,31 @@ type stringSlice []string
 func (s *stringSlice) String() string     { return strings.Join(*s, ",") }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
 
-// addRequestFlags registers the input flags shared by every subcommand and
-// returns the slice the -policy values land in plus the selected -provider
-// name (default "calico"). -provider chooses which CNI engine evaluates the
-// Request; the default preserves the original Calico-only behaviour.
-func addRequestFlags(fs *flag.FlagSet) (*stringSlice, *string) {
+// addRequestFlags registers shared policy, provider, and topology inputs.
+func addRequestFlags(fs *flag.FlagSet) (*stringSlice, *string, *string) {
 	var policies stringSlice
-	fs.Var(&policies, "policy", "raw policy manifest YAML file or directory to append to the stdin Request (repeatable)")
+	fs.Var(&policies, "policy", "raw policy manifest YAML file or directory to append to the Request (repeatable)")
 	prov := fs.String("provider", defaultProvider, "CNI policy engine to evaluate with (e.g. calico)")
-	return &policies, prov
+	topology := fs.String("topology", "", "topology Request file (YAML or JSON); omitted or - reads stdin")
+	return &policies, prov, topology
 }
 
-// loadRequest builds the Request: decode stdin (JSON or YAML, when piped), then
-// append every policy parsed from the -policy files/directories. Stdin and
-// -policy compose — stdin carries the topology, -policy adds manifests — but
-// either may be omitted.
-func loadRequest(policyPaths []string) api.Request {
-	data, err := readPipedStdin()
-	if err != nil {
-		fail("read stdin: %v", err)
+// loadRequest decodes a topology Request from a file or, by default, stdin,
+// then appends policies from the -policy files/directories. An explicit file
+// takes precedence over stdin; topology and policy inputs may both be omitted.
+func loadRequest(topologyPath string, policyPaths []string) api.Request {
+	var data []byte
+	var err error
+	if topologyPath != "" && topologyPath != "-" {
+		data, err = os.ReadFile(topologyPath)
+		if err != nil {
+			fail("read topology %s: %v", topologyPath, err)
+		}
+	} else {
+		data, err = readPipedStdin()
+		if err != nil {
+			fail("read stdin: %v", err)
+		}
 	}
 	req, err := api.DecodeRequest(data)
 	if err != nil {
@@ -458,11 +465,11 @@ func runIptables(args []string) {
 	ipv := fs.String("ipversion", "", "IP version(s) to render: 4 | 6 | both (default: inferred from endpoints)")
 	noStatic := fs.Bool("no-static", false, "omit Felix's static top-level chains (cali-INPUT/FORWARD/OUTPUT); show only policy/endpoint/profile chains")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	dr := mustDataplaneRenderer(*prov)
-	req := loadRequest(*policies)
+	req := loadRequest(*topology, *policies)
 
 	opts := calico.IptablesOptions{IncludeStatic: !*noStatic}
 	switch *backend {
@@ -534,11 +541,11 @@ func runBPF(args []string) {
 	dir := fs.String("direction", "both", "direction(s) to render: ingress | egress | both")
 	ipv := fs.String("ipversion", "", "IP version(s) to render: 4 | 6 | both (default: inferred from endpoints)")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	dr := mustDataplaneRenderer(*prov)
-	req := loadRequest(*policies)
+	req := loadRequest(*topology, *policies)
 
 	var opts calico.BPFOptions
 	if *endpoint != "" {
@@ -693,11 +700,11 @@ func runHNS(args []string) {
 	endpoint := fs.String("endpoint", "", "only render endpoints whose ID contains this substring (default: all)")
 	dir := fs.String("direction", "both", "direction(s) to render: ingress | egress | both")
 	asJSON := fs.Bool("json", false, "emit the structured JSON response instead of text")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	dr := mustDataplaneRenderer(*prov)
-	req := loadRequest(*policies)
+	req := loadRequest(*topology, *policies)
 
 	var opts calico.HNSOptions
 	if *endpoint != "" {
@@ -785,7 +792,7 @@ func formatHNSRule(r calico.HNSRule) string {
 }
 
 // runTest implements `telepathy test`: read the same JSON/YAML Request
-// from stdin (topology) plus any -policy manifests, then check every assertion
+// from -topology or stdin plus any -policy manifests, then check every assertion
 // in the -assert file against the evaluated connectivity matrix. Prints a
 // per-assertion pass/fail list and exits 1 if any assertion fails — the bit a
 // CI step keys off. -json emits the structured api.AssertionReport instead.
@@ -794,7 +801,7 @@ func runTest(args []string) {
 	assertPath := fs.String("assert", "", "connectivity test file (YAML/JSON: a list of {from,to,expect[,port,protocol,name]}, or an `assertions:` key)")
 	matrixIn := fs.String("matrix-in", "", "gate against a pre-streamed matrix FILE (from -matrix-out) instead of re-evaluating — reads only the asserted pairs, so memory stays small (single-probe: per-assertion port/protocol is ignored)")
 	asJSON := fs.Bool("json", false, "emit the structured JSON AssertionReport instead of text")
-	policies, prov := addRequestFlags(fs)
+	policies, prov, topology := addRequestFlags(fs)
 	_ = fs.Parse(args)
 
 	if *assertPath == "" {
@@ -816,7 +823,7 @@ func runTest(args []string) {
 		}
 	} else {
 		p := mustProvider(*prov)
-		req := loadRequest(*policies)
+		req := loadRequest(*topology, *policies)
 		report = api.RunAssertions(p.Evaluate, req, assertions)
 	}
 
