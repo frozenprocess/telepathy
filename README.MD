@@ -62,6 +62,15 @@ Calico also groups equivalent endpoints to reduce checker calls. HostEndpoint
 topologies use per-pair evaluation; set `TELEPATHY_NO_COLLAPSE=1` to force that
 path for any topology. Output still contains every ordered pair.
 
+Default actions also reduce evaluation work: Antrea indexes policies by endpoint
+and direction, eliminates rules that cannot match the probe, and stops at the
+first matching allow. Cilium bypasses lookups when source egress and destination
+ingress have no applicable compiled rules. Calico caches each direction using
+only its owner's relevant membership tests, preserving native tier defaults,
+profiles, and staged-policy behavior. A selected endpoint with no matching rule
+is **not** automatically allowed. Full matrix output remains quadratic even
+when the default verdict is known.
+
 ### 2. `test` — assertions as a CI gate
 Write expectations next to your policies and let Telepathy enforce them. Exit code is non-zero when any assertion fails.
 

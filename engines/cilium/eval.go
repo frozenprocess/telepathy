@@ -61,6 +61,10 @@ const firstUserIdentity = 256
 // endpoint pair). Fine for topology-sized inputs; cache per-source
 // SelectorPolicy if a large matrix ever gets slow.
 func evaluate(req api.Request) api.Response {
+	return evaluateWithDefaults(req, true)
+}
+
+func evaluateWithDefaults(req api.Request, optimize bool) api.Response {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// Process-wide default: enforce policy only for endpoints a policy selects
 	// (Cilium's normal mode). ponytail: package global, so one enforcement mode
@@ -163,6 +167,10 @@ func evaluate(req api.Request) api.Response {
 		port = 8080
 	}
 
+	var affected []endpointDirections
+	if optimize {
+		affected = affectedDirections(repo, idents)
+	}
 	for i, j := range api.EndpointPairs(req.Endpoints, req.MatrixPairs) {
 		src, dst := req.Endpoints[i], req.Endpoints[j]
 		flow := policytypes.Flow{
@@ -172,6 +180,12 @@ func evaluate(req api.Request) api.Response {
 			Dport:         uint16(port),
 			NamedPortsTCP: namedTCP[j],
 			NamedPortsUDP: namedUDP[j],
+		}
+		// Preserve LookupFlow validation and reserved-init enforcement even
+		// for otherwise unrestricted endpoints.
+		if optimize && uint16(port) != 0 && proto != 0 && !affected[i].egress && !affected[j].ingress {
+			resp.Matrix[src.ID+"->"+dst.ID] = "allow"
+			continue
 		}
 		verdict := "deny"
 		if v, _, _, err := policy.LookupFlow(logger, repo, idmgr, flow); err != nil {
