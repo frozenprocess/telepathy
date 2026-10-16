@@ -125,3 +125,37 @@ func TestEvaluateEgressCIDR(t *testing.T) {
 		}
 	}
 }
+
+// Egress named ports use the destination endpoint's declared port map through
+// Repository.SetNamedPortsGetter; Flow.NamedPortsTCP/UDP alone only covers ingress.
+func TestEvaluateEgressNamedPort(t *testing.T) {
+	req := api.Request{
+		Namespaces: []api.NamespaceInput{{Name: "demo"}},
+		Endpoints: []api.Endpoint{
+			{ID: "demo/frontend", Namespace: "demo", Name: "frontend", Labels: map[string]string{"role": "frontend"}},
+			{ID: "demo/backend", Namespace: "demo", Name: "backend", Labels: map[string]string{"role": "backend"}, Ports: []api.EndpointPort{{Name: "web", Port: 8080, Protocol: "tcp"}}},
+		},
+		Policies: []api.PolicyInput{{YAML: `
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: {name: frontend-egress, namespace: demo}
+spec:
+  endpointSelector: {matchLabels: {role: frontend}}
+  egress:
+  - toEndpoints: [{matchLabels: {role: backend}}]
+    toPorts:
+    - ports: [{port: web, protocol: TCP}]
+`}},
+		Protocol: "tcp",
+	}
+	for port, want := range map[int]string{8080: "allow", 9090: "deny"} {
+		req.Port = port
+		resp := evaluate(req)
+		if len(resp.Errors) > 0 {
+			t.Fatalf("port %d errors: %v", port, resp.Errors)
+		}
+		if got := resp.Matrix["demo/frontend->demo/backend"]; got != want {
+			t.Errorf("port %d: got %q, want %q", port, got, want)
+		}
+	}
+}

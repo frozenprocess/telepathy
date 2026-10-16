@@ -38,6 +38,7 @@ import (
 	policyapi "github.com/cilium/cilium/pkg/policy/api"
 	policytypes "github.com/cilium/cilium/pkg/policy/types"
 	testpolicy "github.com/cilium/cilium/pkg/testutils/policy"
+	ciliumtypes "github.com/cilium/cilium/pkg/types"
 	"github.com/cilium/cilium/pkg/u8proto"
 	policyv1alpha2 "sigs.k8s.io/network-policy-api/apis/v1alpha2"
 	"sigs.k8s.io/yaml"
@@ -98,6 +99,26 @@ func evaluateWithDefaults(req api.Request, optimize bool) api.Response {
 	// tolerated for L3/L4 policy; L7/TLS rules would need them wired.
 	idmgr := identitymanager.NewIDManager(logger)
 	repo := policy.NewPolicyRepository(logger, nil, nil, nil, idmgr, testpolicy.NewPolicyMetricsNoop())
+	namedPortMap := ciliumtypes.NewNamedPortMultiMap()
+	for i, ep := range req.Endpoints {
+		ports := ciliumtypes.NamedPortMap{}
+		for _, p := range ep.Ports {
+			if p.Name == "" {
+				continue // numeric ports are passed on each flow, not the named-port index
+			}
+			protocol := p.Protocol
+			if protocol == "" {
+				protocol = "tcp"
+			}
+			if err := ports.AddPort(p.Name, p.Port, protocol); err != nil {
+				resp.Warnings = append(resp.Warnings, fmt.Sprintf("cilium provider: endpoint %s named port %q: %v", ep.ID, p.Name, err))
+			}
+		}
+		namedPortMap.Update(identity.NumericIdentity(idents[i].ID), nil, ports)
+	}
+	// Cilium resolves named ports on egress through the repository's getter;
+	// Flow.NamedPortsTCP/UDP only supplies the destination owner for ingress.
+	repo.SetNamedPortsGetter(topologyNamedPorts{ports: namedPortMap})
 
 	// LookupFlow checks BOTH the subject and the regular SelectorCache, and the
 	// constructor only seeds the regular one — so load identities into both.
@@ -390,3 +411,11 @@ func endpointNamespace(ep api.Endpoint) string {
 	}
 	return ""
 }
+
+// topologyNamedPorts adapts the Request's endpoint ports to the repository
+// interface used when resolving egress named-port rules.
+type topologyNamedPorts struct {
+	ports ciliumtypes.NamedPortMultiMap
+}
+
+func (n topologyNamedPorts) GetNamedPorts() ciliumtypes.NamedPortMultiMap { return n.ports }
