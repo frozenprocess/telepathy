@@ -1,0 +1,35 @@
+# Shared topology for the egress external-CIDR parity pair
+# (calico-np-egress-external-cidr <-> cilium-cnp-egress-external-cidr). This file
+# is byte-identical between the two cases so the ONLY variable is the policy
+# dialect. frontend's egress is allowed only to the external CIDR 1.1.1.0/24 (a
+# public range no in-cluster pod IP falls inside); world/internet (1.1.1.1) sits
+# inside it and is the sole reachable destination. frontend must NOT reach the
+# in-cluster backend. realInternet realizes world/internet as a real off-cluster
+# address so a live cluster can ping it (see meta.yaml).
+namespaces:
+  - name: demo
+    labels:
+      kubernetes.io/metadata.name: demo
+endpoints:
+  - id: demo/frontend
+    namespace: demo
+    name: frontend
+    ip: 10.0.0.1
+    labels:
+      role: frontend
+  - id: demo/backend
+    namespace: demo
+    name: backend
+    ip: 10.0.0.2
+    labels:
+      role: backend
+  - id: world/internet
+    namespace: world
+    name: internet
+    ip: 1.1.1.1
+    labels:
+      scope: internet
+    role: external
+    unpoliced: true
+port: 8080
+protocol: tcp

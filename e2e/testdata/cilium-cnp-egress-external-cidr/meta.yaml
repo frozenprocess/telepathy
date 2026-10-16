@@ -1,0 +1,19 @@
+# cilium-flavored: only the cilium engine evaluates CiliumNetworkPolicy.
+#
+# Half of an egress external-CIDR parity pair. topology.yaml and assertions.yaml
+# are byte-identical to calico-np-egress-external-cidr, so the ONLY variable is
+# the policy dialect: a namespaced CiliumNetworkPolicy vs a namespaced Calico
+# NetworkPolicy (same scope on both sides). Both encode the same intent: egress
+# to the external CIDR 1.1.1.0/24 allowed, everything else denied. The Calico
+# engine reproduces that intent; the Cilium engine denies the CIDR flow (its
+# offline evaluator builds an identity per endpoint from labels only and never
+# resolves a peer's raw IP to a CIDR identity — see engines/cilium/eval.go), so
+# this case is RED in verify and a hard DIFF on a live cluster (a real Cilium
+# cluster DOES allow egress to a permitted toCIDR). Diffing the pair's pass/fail
+# isolates the difference to the engine, not the topology.
+flavor: cilium
+
+# world/internet is a REAL address: no stand-in pod. It resolves per run to a
+# public endpoint and the internet assertion pings it out through the node's NAT
+# (see _template/meta.yaml). Byte-identical to the calico half.
+realInternet: true

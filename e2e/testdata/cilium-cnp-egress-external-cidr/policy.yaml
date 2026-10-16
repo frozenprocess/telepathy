@@ -1,0 +1,27 @@
+# Cilium half of the egress external-CIDR parity pair. Semantically identical to
+# calico-np-egress-external-cidr's policy: frontend's egress is allowed only to
+# the external CIDR 1.1.1.0/24 via toCIDR. An egress rule makes egress
+# default-deny for frontend, so the in-cluster backend is refused; world/internet
+# (1.1.1.1) falls inside the CIDR and is reachable.
+#
+# BUG (telepathy cilium engine gap): CIDR peers never match in the offline
+# engine, producing a false DENY. engines/cilium/eval.go fabricates one identity
+# per endpoint from labels only (endpointLabels) and never seeds the ipcache, so
+# a peer's raw IP is not resolved to a CIDR identity — toCIDR/fromCIDR rules match
+# nothing and the default-deny wins. So the engine denies frontend->1.1.1.0/24
+# while a live Cilium cluster allows it. In verify mode the first assertion fails;
+# on a live cluster it is a hard DIFF (engine=deny, cluster=allow). Fix: seed the
+# CIDR identities the loaded rules reference into the ipcache/SelectorCache and
+# label each peer with its IP so LookupFlow resolves the CIDR identity.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: frontend-egress-allow-external-cidr
+  namespace: demo
+spec:
+  endpointSelector:
+    matchLabels:
+      role: frontend
+  egress:
+    - toCIDR:
+        - 1.1.1.0/24

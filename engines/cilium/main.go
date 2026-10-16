@@ -89,7 +89,8 @@ func capabilities() []api.Capability {
 		{Name: "L3 endpoint/label selectors", Supported: true,
 			Notes: "EndpointSelector resolved to identities via the real SelectorCache"},
 		{Name: "L3 CIDR (+except, CIDRGroups)", Supported: true,
-			Notes: "matched against an endpoint's identity labels; a peer's raw IP is not resolved to a CIDR identity yet"},
+			Notes: "an off-cluster peer (Role \"external\") gets a world+CIDR identity from its IP, so toCIDR/fromCIDR " +
+				"and the world entity match it; in-cluster pods keep their label identity, so a CIDR covering a pod IP does not select the pod"},
 		{Name: "entities (world/host/remote-node/kube-apiserver/…)", Supported: true,
 			Notes: "reserved-identity selectors resolve; endpoints are labeled workloads, so a world/host peer must be modeled as such"},
 		{Name: "L4 ports (numeric, ranges, named)", Supported: true,

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"sync"
 
@@ -212,7 +213,30 @@ func endpointLabels(ep api.Endpoint, nsLabels map[string]map[string]string) labe
 			project(k, v)
 		}
 	}
-	return labels.Map2Labels(m, labels.LabelSourceK8s)
+	lbls := labels.Map2Labels(m, labels.LabelSourceK8s)
+	// An off-cluster peer ("the internet", a partner API) is modeled the way
+	// Cilium's ipcache models any non-endpoint IP: a CIDR identity carrying the
+	// host-prefix cidr label AND the reserved:world label. That makes toCIDR /
+	// fromCIDR rules match it (Cilium's SelectorCache does prefix containment on
+	// cidr labels — LabelArray.Has treats `cidr:1.1.1.1/32` as satisfying a
+	// broader `cidr:1.0.0.0/8` selector, and a CIDR selector also requires the
+	// world label) and toEntities/fromEntities: world match it too. We reuse
+	// Cilium's own labels.GetCIDRLabels (the call the ipcache uses) rather than
+	// reimplement the prefix math.
+	//
+	// In-cluster pods are deliberately NOT given these labels: a pod is not
+	// "world", and whether a toCIDR that happens to cover a pod IP matches it is
+	// a contested, version-dependent Cilium behaviour we don't want to assert.
+	// So only endpoints the caller flags off-cluster (Role "external") get the
+	// CIDR identity; every pod keeps its label identity.
+	if ep.Role == "external" {
+		if addr, err := netip.ParseAddr(ep.IP); err == nil {
+			for k, v := range labels.GetCIDRLabels(netip.PrefixFrom(addr, addr.BitLen())) {
+				lbls[k] = v
+			}
+		}
+	}
+	return lbls
 }
 
 // namedPorts maps an endpoint's declared named ports for one protocol to their

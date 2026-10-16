@@ -77,3 +77,42 @@ func TestEvaluateIngressIsolation(t *testing.T) {
 		}
 	}
 }
+
+// TestEvaluateEgressCIDR guards the CIDR-peer resolution: an off-cluster peer
+// (Role "external") is given a world+cidr identity, so a toCIDR rule matches it
+// via Cilium's own prefix-containment (1.1.1.1 ∈ 1.1.1.0/24), while an
+// in-cluster pod outside the CIDR is denied. Regression test for the false DENY
+// where a peer's IP was never resolved to a CIDR identity.
+func TestEvaluateEgressCIDR(t *testing.T) {
+	cnp := "apiVersion: cilium.io/v2\n" +
+		"kind: CiliumNetworkPolicy\n" +
+		"metadata:\n  name: fe-egress-cidr\n  namespace: demo\n" +
+		"spec:\n  endpointSelector:\n    matchLabels:\n      role: frontend\n" +
+		"  egress:\n  - toCIDR:\n    - 1.1.1.0/24\n"
+
+	req := api.Request{
+		Endpoints: []api.Endpoint{
+			{ID: "demo/frontend", Namespace: "demo", Name: "frontend", IP: "10.0.0.1", Labels: map[string]string{"role": "frontend"}},
+			{ID: "demo/backend", Namespace: "demo", Name: "backend", IP: "10.0.0.2", Labels: map[string]string{"role": "backend"}},
+			{ID: "world/internet", Namespace: "world", Name: "internet", IP: "1.1.1.1", Labels: map[string]string{"scope": "internet"}, Role: "external", Unpoliced: true},
+		},
+		Namespaces: []api.NamespaceInput{{Name: "demo"}},
+		Policies:   []api.PolicyInput{{Flavor: "cilium", YAML: cnp}},
+		Protocol:   "tcp",
+		Port:       8080,
+	}
+
+	resp := evaluate(req)
+	if len(resp.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", resp.Errors)
+	}
+	want := map[string]string{
+		"demo/frontend->world/internet": "allow", // IP inside the allowed CIDR
+		"demo/frontend->demo/backend":   "deny",  // in-cluster pod, outside the CIDR
+	}
+	for k, w := range want {
+		if got := resp.Matrix[k]; got != w {
+			t.Errorf("%s = %q, want %q", k, got, w)
+		}
+	}
+}

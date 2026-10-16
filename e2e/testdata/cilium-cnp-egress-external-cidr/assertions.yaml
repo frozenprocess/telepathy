@@ -1,0 +1,20 @@
+# Shared assertions for the egress external-CIDR parity pair. expect = author
+# intent and the correct live-cluster behaviour for BOTH CNIs (a real Calico or
+# Cilium cluster allows egress to a destination CIDR and denies everything else).
+# This file is byte-identical between calico-np-egress-external-cidr and
+# cilium-cnp-egress-external-cidr, so any pass/fail difference is purely the
+# engine's: the Calico engine matches the external endpoint IP against the rule's
+# CIDR and reproduces the intent; the Cilium engine never resolves a peer IP to a
+# CIDR identity, so it denies the allowed egress and fails the first assertion.
+assertions:
+  - name: frontend reaches the external CIDR 1.1.1.0/24 (world/internet)
+    from: demo/frontend
+    to: world/internet
+    expect: allow
+    protocol: icmp # real ping (realInternet), not a stand-in pod
+  - name: frontend denied to the in-cluster backend (outside the allowed CIDR)
+    from: demo/frontend
+    to: demo/backend
+    expect: deny
+    protocol: tcp
+    port: 8080
