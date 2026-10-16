@@ -39,6 +39,7 @@ import (
 	policytypes "github.com/cilium/cilium/pkg/policy/types"
 	testpolicy "github.com/cilium/cilium/pkg/testutils/policy"
 	"github.com/cilium/cilium/pkg/u8proto"
+	policyv1alpha2 "sigs.k8s.io/network-policy-api/apis/v1alpha2"
 	"sigs.k8s.io/yaml"
 
 	"github.com/frozenprocess/telepathy/api"
@@ -125,10 +126,14 @@ func evaluate(req api.Request) api.Response {
 			if err := loadK8sNetworkPolicy(logger, repo, p.YAML); err != nil {
 				resp.Errors = append(resp.Errors, err.Error())
 			}
+		case kind == "ClusterNetworkPolicy":
+			if err := loadK8sClusterNetworkPolicy(logger, repo, p.YAML); err != nil {
+				resp.Errors = append(resp.Errors, err.Error())
+			}
 		default:
 			resp.Warnings = append(resp.Warnings,
 				fmt.Sprintf("cilium provider: skipping manifest kind %q "+
-					"(evaluated kinds: CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy, k8s NetworkPolicy)", kind))
+					"(evaluated kinds: CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy, k8s NetworkPolicy, ClusterNetworkPolicy)", kind))
 		}
 	}
 	if len(cnpRules) > 0 {
@@ -334,6 +339,32 @@ func loadK8sNetworkPolicy(logger *slog.Logger, repo *policy.Repository, yamlText
 		return fmt.Errorf("cilium provider: invalid NetworkPolicy %q: %v", np.Name, perr)
 	}
 	repo.ReplaceByResource(entries, ipcacheTypes.NewResourceID(ipcacheTypes.ResourceKindNetpol, ns, np.Name))
+	return nil
+}
+
+// loadK8sClusterNetworkPolicy converts a k8s ClusterNetworkPolicy (the NPA /
+// KEP-2091 admin+baseline tiers, policy.networking.k8s.io/v1alpha2) through
+// Cilium's own k8s.ParseClusterNetworkPolicy into policy.PolicyEntries and loads
+// them via Repository.ReplaceByResource under ResourceKindKCNP — the same seam
+// the agent's policy watcher uses (see pkg/policy/k8s/cluster_network_policy.go).
+// The offline resolver honors the Admin/Baseline tier ordering and Pass verdicts
+// via ruleSlice.computeTierPriorities, so no tier handling is needed here.
+// ClusterNetworkPolicy is cluster-scoped, so the resource id carries no namespace.
+func loadK8sClusterNetworkPolicy(logger *slog.Logger, repo *policy.Repository, yamlText string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("cilium provider: load k8s ClusterNetworkPolicy: %v", r)
+		}
+	}()
+	var cnp policyv1alpha2.ClusterNetworkPolicy
+	if uerr := yaml.Unmarshal([]byte(yamlText), &cnp); uerr != nil {
+		return fmt.Errorf("cilium provider: cannot decode ClusterNetworkPolicy: %v", uerr)
+	}
+	entries, perr := k8s.ParseClusterNetworkPolicy(logger, "", &cnp)
+	if perr != nil {
+		return fmt.Errorf("cilium provider: invalid ClusterNetworkPolicy %q: %v", cnp.Name, perr)
+	}
+	repo.ReplaceByResource(entries, ipcacheTypes.NewResourceID(ipcacheTypes.ResourceKindKCNP, "", cnp.Name))
 	return nil
 }
 

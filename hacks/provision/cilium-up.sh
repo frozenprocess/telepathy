@@ -25,6 +25,10 @@ CLUSTER_NAME="${CLUSTER_NAME:-telepathy-e2e-calico-cilium}"
 # Accept a leading "v" (Makefile pins vX.Y.Z) but Helm wants the bare version.
 CILIUM_VERSION="${CILIUM_VERSION:-1.20.3}"
 CILIUM_VERSION="${CILIUM_VERSION#v}"
+# network-policy-api (KEP-2091) CRD version. The Cilium Helm chart does NOT ship
+# the ClusterNetworkPolicy CRD, so we install it separately; keep this in step
+# with the engine's pinned sigs.k8s.io/network-policy-api (engines/cilium go.mod).
+NPA_VERSION="${NPA_VERSION:-v0.2.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -40,6 +44,12 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
+# ClusterNetworkPolicy (policy.networking.k8s.io/v1alpha2) is the k8s admin/
+# baseline tier API. Cilium watches it only when k8sClusterNetworkPolicy.enabled
+# is set below, and only if the CRD is present — the chart doesn't install it.
+log "Installing ClusterNetworkPolicy CRD (network-policy-api $NPA_VERSION)"
+kubectl apply -f "https://raw.githubusercontent.com/kubernetes-sigs/network-policy-api/$NPA_VERSION/config/crd/experimental/policy.networking.k8s.io_clusternetworkpolicies.yaml"
+
 log "Installing Cilium ($CILIUM_VERSION) via Helm"
 helm repo add cilium https://helm.cilium.io/ >/dev/null 2>&1 || true
 helm repo update cilium >/dev/null
@@ -52,6 +62,7 @@ helm upgrade --install cilium cilium/cilium \
   --namespace kube-system \
   --set image.pullPolicy=IfNotPresent \
   --set ipam.mode=kubernetes \
+  --set k8sClusterNetworkPolicy.enabled=true \
   --set sctp.enabled=true
 
 log "Waiting for cilium-operator + cilium agent"

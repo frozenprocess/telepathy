@@ -1330,15 +1330,15 @@ func readMetaInt(t *testing.T, path, key string) (int, bool) {
 }
 
 // k8sOnlyProvider reports whether an engine only predicts upstream Kubernetes
-// NetworkPolicy (no Calico/Antrea/Cilium CRDs, no NPA admin tier). Both the
-// Antrea and Cilium engines are in this class today, so k8s-flavored cases that
-// lean on CRD kinds must be skipped for them (see unsupportedK8sOnlyKind).
+// NetworkPolicy (no Calico/Antrea/Cilium CRDs, no NPA admin tier). Only the
+// Antrea engine is in this class today, so k8s-flavored cases that lean on CRD
+// kinds must be skipped for it (see unsupportedK8sOnlyKind).
 func k8sOnlyProvider(provider string) bool {
-	return provider == "antrea" || provider == "cilium"
+	return provider == "antrea"
 }
 
 // unsupportedK8sOnlyKind returns the first policy kind a k8s-NetworkPolicy-only
-// engine (Antrea, Cilium) cannot evaluate, or "" if the manifest is plain k8s
+// engine (Antrea) cannot evaluate, or "" if the manifest is plain k8s
 // NetworkPolicy. Such a case would have the dataplane enforce the kind while the
 // engine ignores it — a false DIFF, not a real disagreement. It is a
 // deliberately shallow scan of `kind:` lines — enough to gate e2e case

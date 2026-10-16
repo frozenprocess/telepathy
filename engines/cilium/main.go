@@ -29,9 +29,10 @@
 // SelectorCache with their labels, load rules via Repository.MustAddList after
 // CiliumNetworkPolicy.Parse (or Repository.ReplaceByResource for plain k8s
 // NetworkPolicy), then LookupFlow per src->dst pair for the verdict (see
-// eval.go). Today it evaluates CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy
-// and k8s NetworkPolicy; the policy-program dump (EndpointPolicy.GetMapState())
-// is the next step.
+// eval.go). Today it evaluates CiliumNetworkPolicy, CiliumClusterwideNetworkPolicy,
+// k8s NetworkPolicy, and the k8s ClusterNetworkPolicy admin/baseline tiers
+// (policy.networking.k8s.io/v1alpha2, since Cilium v1.20); the policy-program dump
+// (EndpointPolicy.GetMapState()) is the next step.
 package main
 
 import (
@@ -86,6 +87,8 @@ func capabilities() []api.Capability {
 		{Name: "kind: CiliumClusterwideNetworkPolicy (cilium.io/v2)", Supported: true},
 		{Name: "kind: NetworkPolicy (k8s)", Supported: true,
 			Notes: "via k8s.ParseNetworkPolicy -> policy.PolicyEntries -> Repository.ReplaceByResource (Cilium's own k8s seam)"},
+		{Name: "kind: ClusterNetworkPolicy (policy.networking.k8s.io/v1alpha2)", Supported: true,
+			Notes: "k8s admin/baseline tiers (KEP-2091); k8s.ParseClusterNetworkPolicy -> policy.PolicyEntries -> Repository.ReplaceByResource; tier ordering + Pass honored by the resolver"},
 		{Name: "L3 endpoint/label selectors", Supported: true,
 			Notes: "EndpointSelector resolved to identities via the real SelectorCache"},
 		{Name: "L3 CIDR (+except, CIDRGroups)", Supported: true,
