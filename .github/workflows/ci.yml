@@ -75,6 +75,7 @@ jobs:
             hep: false
           - cni: calico
             hep: true
+            case: zz-calico-gnp-hep-
           - cni: antrea
             hep: false
           - cni: cilium
@@ -100,7 +101,7 @@ jobs:
       - name: Run e2e (${{ matrix.cni }}, HEP=${{ matrix.hep }})
         env:
           E2E_INCLUDE_HEP: ${{ matrix.hep && '1' || '' }}
-        run: make e2e PROVIDER=${{ matrix.cni }}
+        run: make e2e PROVIDER=${{ matrix.cni }} CASE=${{ matrix.case }}
       - name: Attach e2e report to release
         # always(): attach the report even when e2e fails — that's when it's most
         # useful. The harness writes it via E2E_REPORT.
