@@ -4,20 +4,20 @@
 set -euo pipefail
 CLUSTER_NAME="${CLUSTER_NAME:-telepathy-e2e-calico}"
 VM_NAME="${VM_NAME:-${CLUSTER_NAME}-win}"
-CACHE="${CACHE:-$HOME/telepathy-windows}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CACHE="${CACHE:-$REPO_ROOT/.telepathy-windows}"
 WORK="$CACHE/$VM_NAME"
 
 virsh destroy "$VM_NAME" 2>/dev/null || true
-# NOT --remove-all-storage: that deletes every volume attached to the domain,
-# including the read-only install/virtio CD-ROMs (the user's Windows ISO and the
-# cached virtio ISO). Undefine only, then remove just this VM's own files.
-virsh undefine "$VM_NAME" --nvram 2>/dev/null || true
+# Undefine only. Do not pass --nvram: legacy domains may have their UEFI vars
+# in libvirt's system directory, outside this VM's owned folder. New domains put
+# their varstore under WORK. Never remove attached storage implicitly.
+virsh undefine "$VM_NAME" 2>/dev/null || true
 
-# The per-VM working dir holds only generated files (the qcow2 disk + the
-# rendered autounattend ISO). The Windows ISO (external, user-supplied) and the
-# virtio ISO (cached directly under $CACHE, a sibling of $WORK) live outside it,
-# so removing $WORK never touches them. We own $WORK, so files libvirt chowned to
-# libvirt-qemu still unlink.
+# Remove only generated files owned by this VM (qcow2, answer ISO, and new
+# per-VM NVRAM) and cached ISOs. All default assets live under CACHE in the
+# repository; a CACHE override explicitly selects a different owned root.
 rm -rf "$WORK"
 
 # Best-effort: delete the node object so the cluster forgets it.

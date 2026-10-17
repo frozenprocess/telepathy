@@ -17,3 +17,6 @@
 
 /e2e/logs/
 /engines/cilium/cilium
+
+# Local Windows VM disks, firmware state, answer media, and installer cache.
+/.telepathy-windows/

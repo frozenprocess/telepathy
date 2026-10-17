@@ -22,6 +22,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -240,11 +241,36 @@ func (c *cluster) restartCalicoNode(ctx context.Context, timeout time.Duration) 
 // these Deployments talk to the k8s apiserver, not Typha, so rolling them alone
 // doesn't trigger the Typha relist storm restartCalicoNode guards against.
 func (c *cluster) restartCalicoControlPlane(ctx context.Context, timeout time.Duration) (string, error) {
-	for _, deploy := range []string{"deployment/calico-apiserver", "deployment/calico-kube-controllers"} {
-		if out, err := c.kubectl(ctx, nil, "-n", calicoSystemNS, "rollout", "restart", deploy); err != nil {
+	// Native v3 installations have calico-webhooks instead of calico-apiserver.
+	// Discover actual namespaces as older installs use calico-apiserver namespace.
+	out, err := c.kubectl(ctx, nil, "get", "deployments.apps", "-A", "-o", "json")
+	if err != nil {
+		return out, cmdErr("list Calico deployments", out, err)
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name      string
+				Namespace string
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		return out, err
+	}
+	for _, item := range list.Items {
+		name, ns := item.Metadata.Name, item.Metadata.Namespace
+		if ns != calicoSystemNS && ns != "calico-apiserver" {
+			continue
+		}
+		if name != "calico-apiserver" && name != "calico-webhooks" && name != "calico-kube-controllers" {
+			continue
+		}
+		deploy := "deployment/" + name
+		if out, err := c.kubectl(ctx, nil, "-n", ns, "rollout", "restart", deploy); err != nil {
 			return out, cmdErr("rollout restart "+deploy, out, err)
 		}
-		if out, err := c.kubectl(ctx, nil, "-n", calicoSystemNS, "rollout", "status", deploy,
+		if out, err := c.kubectl(ctx, nil, "-n", ns, "rollout", "status", deploy,
 			fmt.Sprintf("--timeout=%ds", int(timeout.Seconds()))); err != nil {
 			return out, cmdErr("rollout status "+deploy, out, err)
 		}

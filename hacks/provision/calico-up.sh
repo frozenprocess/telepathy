@@ -41,6 +41,7 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/v3_projectcalico_org.yaml
 
 log "Installing Tigera operator ($CALICO_VERSION)"
 # Server-side apply avoids the 'metadata.annotations too long' error and keeps
@@ -77,12 +78,12 @@ kubectl -n calico-system rollout status deploy/calico-kube-controllers --timeout
 log "Waiting for node(s) Ready (CNI installed)"
 kubectl wait --for=condition=Ready node --all --timeout=180s
 
-log "Waiting for Calico API server (enables projectcalico.org via kubectl)"
+log "Waiting for Calico API calico-webhooks"
 for _ in $(seq 1 60); do
-  if kubectl -n calico-system get deploy/calico-apiserver >/dev/null 2>&1; then break; fi
+  if kubectl -n calico-system get deploy/calico-webhooks >/dev/null 2>&1; then break; fi
   sleep 5
 done
-kubectl -n calico-system rollout status deploy/calico-apiserver --timeout=180s || true
+kubectl -n calico-system rollout status deploy/calico-webhooks --timeout=180s || true
 
 log "Cluster '$CLUSTER_NAME' is ready."
 kubectl get nodes -o wide

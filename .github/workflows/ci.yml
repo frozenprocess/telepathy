@@ -56,8 +56,9 @@ jobs:
       - name: Connectivity diff demo (make diff-demo)
         run: make diff-demo
 
-  # Stand up a real kind cluster per CNI and compare each testdata case's actual
-  # connectivity against the engine. Matrix so Calico and Antrea run in parallel.
+  # Stand up a real kind cluster per run and compare each testdata case's actual
+  # connectivity against the engine. Calico runs twice: the regular sweep and a
+  # separate HostEndpoint sweep, so their cluster-wide failsafe changes are isolated.
   e2e:
     # Full cluster comparison is the release gate only: a v* tag push. Every
     # other event relies on make verify / verify-all in build-test (engine vs
@@ -69,13 +70,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cni: [calico, antrea, cilium]
+        include:
+          - cni: calico
+            hep: false
+          - cni: calico
+            hep: true
+          - cni: antrea
+            hep: false
+          - cni: cilium
+            hep: false
     env:
       GOTOOLCHAIN: auto
       CGO_ENABLED: "0"
       # Absolute: `go test ./e2e/...` runs with cwd=e2e/, so a relative path would
       # land there instead of where the upload step looks.
-      E2E_REPORT: ${{ github.workspace }}/e2e-report-${{ matrix.cni }}.txt
+      E2E_REPORT: ${{ github.workspace }}/e2e-report-${{ matrix.cni }}-${{ matrix.hep && 'hep' || 'standard' }}.txt
       E2E_TIMEOUT: 120m
     steps:
       - uses: actions/checkout@v4
@@ -89,11 +98,9 @@ jobs:
       - name: Load sctp module (Calico SCTP cases)
         if: matrix.cni == 'calico'
         run: sudo modprobe sctp
-      - name: Run e2e (${{ matrix.cni }})
-        # Calico also exercises the HostEndpoint cases (E2E_INCLUDE_HEP); they
-        # narrow Calico's failsafes cluster-wide while running, so they're opt-in.
+      - name: Run e2e (${{ matrix.cni }}, HEP=${{ matrix.hep }})
         env:
-          E2E_INCLUDE_HEP: ${{ matrix.cni == 'calico' && '1' || '' }}
+          E2E_INCLUDE_HEP: ${{ matrix.hep && '1' || '' }}
         run: make e2e PROVIDER=${{ matrix.cni }}
       - name: Attach e2e report to release
         # always(): attach the report even when e2e fails — that's when it's most

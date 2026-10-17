@@ -94,15 +94,57 @@ func narrowFailsafes(ctx context.Context, c *cluster) error {
 	return nil
 }
 
+// calicoStorageGroup discovers the installed CRDs through Kubernetes itself,
+// without relying on discovery from an unhealthy aggregated Calico API.
+func (c *cluster) calicoStorageGroup(ctx context.Context) (string, error) {
+	out, err := c.kubectl(ctx, nil, "get", "customresourcedefinitions.apiextensions.k8s.io",
+		"hostendpoints.crd.projectcalico.org", "hostendpoints.projectcalico.org",
+		"--ignore-not-found", "-o", "jsonpath={.items[*].metadata.name}", "--request-timeout=60s")
+	if err != nil {
+		return "", cmdErr("discover Calico storage CRDs", out, err)
+	}
+	for _, name := range strings.Fields(out) {
+		if name == "hostendpoints.projectcalico.org" {
+			return "projectcalico.org", nil
+		}
+	}
+	for _, name := range strings.Fields(out) {
+		if name == "hostendpoints.crd.projectcalico.org" {
+			return "crd.projectcalico.org", nil
+		}
+	}
+	return "", fmt.Errorf("no Calico HostEndpoint CRD installed")
+}
+
+// deleteHostEndpoints uses the native v3 CRD or the backing v1 CRD,
+// bypassing the aggregated Calico API when it is installed.
+// Only explicit names are accepted so teardown cannot delete unrelated HEPs.
+func (c *cluster) deleteHostEndpoints(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	group, err := c.calicoStorageGroup(ctx)
+	if err != nil {
+		return err
+	}
+	args := append([]string{"delete", "hostendpoints." + group}, names...)
+	args = append(args, "--ignore-not-found", "--wait=true", "--timeout=60s", "--request-timeout=60s")
+	out, err := c.kubectl(ctx, nil, args...)
+	if err != nil {
+		return cmdErr("delete backing HostEndpoints", out, err)
+	}
+	return nil
+}
+
 // repairLeakedHEPState undoes a HostEndpoint a prior case leaked by NOT running
 // its teardown: a timed-out (`go test -timeout`) or killed run never runs
 // t.Cleanup, so its HostEndpoints persist. A leaked HostEndpoint on the
 // control-plane node default-drops FORWARDED (cross-node) pod traffic — silently
 // poisoning every later case — and tigerastatus stays Available throughout, so
-// ensureClusterHealthy can't see it. The per-case deleteOrphanClusterPolicies
-// reaps the object but --wait=false, so the dataplane drop chains can outlive
-// it. This does the synchronous repair, but ONLY when a leak is detected — a
-// clean run pays one get. Calico only.
+// ensureClusterHealthy can't see it. Remove HEPs synchronously through the
+// backing Kubernetes CRD before deleting their policies or restarting Calico.
+// This also works when the aggregated Calico API is unavailable. A clean run
+// pays one get. Calico only.
 //
 // Narrowed failsafes are NOT treated as a leak: narrowing is idempotent and
 // inert without a HostEndpoint, and is deliberately left in place across cases
@@ -112,9 +154,13 @@ func repairLeakedHEPState(ctx context.Context, t *testing.T, c *cluster) {
 	if cfg.Provider != "calico" {
 		return
 	}
-	heps, err := c.kubectl(ctx, nil, "get", "hostendpoints.projectcalico.org",
+	group, err := c.calicoStorageGroup(ctx)
+	if err != nil {
+		t.Fatalf("repair HEP state: %v", err)
+	}
+	heps, err := c.kubectl(ctx, nil, "get", "hostendpoints."+group,
 		"-l", "app.kubernetes.io/managed-by!=tigera-operator",
-		"-o", "jsonpath={.items[*].metadata.name}")
+		"-o", "jsonpath={.items[*].metadata.name}", "--request-timeout=60s")
 	if err != nil {
 		t.Logf("repair HEP state: list hostendpoints: %v\n%s", err, heps)
 		return
@@ -126,20 +172,19 @@ func repairLeakedHEPState(ctx context.Context, t *testing.T, c *cluster) {
 
 	// Delete the orphan HostEndpoints and WAIT — removing them lifts the
 	// applyOnForward drop that poisons cross-node traffic.
-	if out, err := c.kubectl(ctx, nil, "delete", "hostendpoints.projectcalico.org",
-		"-l", "app.kubernetes.io/managed-by!=tigera-operator",
-		"--ignore-not-found", "--wait=true", "--timeout=60s"); err != nil {
-		t.Logf("repair HEP state: delete hostendpoints: %v\n%s", err, out)
+	if err := c.deleteHostEndpoints(ctx, strings.Fields(heps)); err != nil {
+		t.Fatalf("repair HEP state: %v", err)
 	}
+
 	// The node-subnet IPPool is the other half of a HEP case's leaked state (its
 	// teardown deletes it too); reap it so a leaked pool over the node subnet
 	// can't linger. deleteOrphanClusterPolicies handles the GNP/GNS.
-	if out, err := c.kubectl(ctx, nil, "delete", "ippool", nodeSubnetPool,
+	if out, err := c.kubectl(ctx, nil, "delete", "ippools."+group, nodeSubnetPool,
 		"--ignore-not-found", "--wait=true", "--timeout=60s"); err != nil {
 		t.Logf("repair HEP state: delete node-subnet IPPool: %v\n%s", err, out)
 	}
-	// Felix needs a moment to pull the forward chains once the HEP is gone; flush
-	// conntrack so no established entry masks the change, then let it converge.
+	// Give Felix time to remove the HEP chains before flushing connections.
+	time.Sleep(cfg.HEPSettleDelay)
 	if nodes, err := c.nodes(ctx); err == nil {
 		names := make([]string, 0, len(nodes))
 		for n := range nodes {
@@ -147,7 +192,6 @@ func repairLeakedHEPState(ctx context.Context, t *testing.T, c *cluster) {
 		}
 		flushConntrack(ctx, c, names)
 	}
-	time.Sleep(cfg.HEPSettleDelay)
 }
 
 // nodeSubnetPool is the name of the temporary disabled IPPool the HEP harness

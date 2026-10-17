@@ -396,10 +396,10 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 	// degrade Calico itself, and the health gate's calico-node restart can't
 	// recover while the leak is still applied — so remove the leak first, then
 	// gate on health.
+	repairLeakedHEPState(ctx, t, c)
 	if out, err := c.deleteOrphanClusterPolicies(ctx); err != nil {
 		t.Logf("pre-clean delete orphan cluster policies: %v\n%s", err, out)
 	}
-	repairLeakedHEPState(ctx, t, c)
 
 	// Gate the scenario on a recovered control plane. A preceding HostEndpoint
 	// case narrows Calico's failsafes cluster-wide and flushes conntrack on the
@@ -618,6 +618,20 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 				"clean up with hacks/provision/calico-down.sh", name, strings.Join(sortedKeys(createdNS), ", "))
 			return
 		}
+		// Remove HEPs while their allow rules still exist. Use the Kubernetes
+		// backing CRD so a broken aggregated Calico API cannot block recovery.
+		if appliedHEP != "" {
+			var names []string
+			for _, h := range req.HostEndpoints {
+				names = append(names, h.Name)
+			}
+			if err := c.deleteHostEndpoints(cctx, names); err != nil {
+				t.Errorf("teardown delete host endpoints: %v", err)
+				return // retain policy rather than strand HEPs without allow rules
+			}
+			time.Sleep(cfg.HEPSettleDelay)
+			flushConntrack(cctx, c, hepNodes)
+		}
 		// Policy teardown is two passes because Calico rejects deleting a
 		// non-empty tier synchronously (admission webhook), so the tier's GNPs
 		// must be *gone* — not just delete-requested — before the tier delete is
@@ -626,8 +640,8 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		// ignored. Pass 2 deletes the now-empty tier. We only ever delete the
 		// case manifest's own objects, so the built-in tiers (default,
 		// kube-admin, kube-baseline) — which can't be deleted by design — are
-		// never touched. Then HEPs, then netsets. Failsafes are deliberately NOT
-		// restored: narrowing is idempotent and inert on nodes with no
+		// never touched. HEPs have already been removed; netsets follow.
+		// Failsafes are deliberately NOT restored: narrowing is idempotent and inert on nodes with no
 		// HostEndpoint, and toggling FailsafeHostPorts forces a full Felix restart
 		// on every node (Calico requires it) — the restart briefly severs
 		// calico-node↔apiserver, leaving pods scheduled meanwhile stuck in
@@ -637,12 +651,6 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 			if out, err := c.deleteManifest(cctx, appliedPolicy); err != nil {
 				t.Logf("teardown delete policy: %v\n%s", err, out)
 			}
-		}
-		if appliedHEP != "" {
-			_, _ = c.deleteManifest(cctx, appliedHEP)
-		}
-		if len(hepNodes) > 0 {
-			flushConntrack(cctx, c, hepNodes)
 		}
 		if appliedNodePool != "" {
 			if out, err := c.deleteManifest(cctx, appliedNodePool); err != nil {
@@ -874,6 +882,12 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		}
 	}
 
+	// Install allow rules before attaching HostEndpoints to live nodes.
+	appliedPolicy = rw.rewriteText(policyText)
+	if out, err := c.apply(ctx, appliedPolicy); err != nil {
+		t.Fatalf("apply policy: %v\n%s", err, out)
+	}
+
 	if len(req.HostEndpoints) > 0 {
 		if err := narrowFailsafes(ctx, c); err != nil {
 			t.Fatalf("%v", err)
@@ -903,13 +917,8 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		if out, err := c.apply(ctx, appliedHEP); err != nil {
 			t.Fatalf("apply host endpoints: %v\n%s", err, out)
 		}
-		flushConntrack(ctx, c, hepNodes)
 	}
 
-	appliedPolicy = rw.rewriteText(policyText)
-	if out, err := c.apply(ctx, appliedPolicy); err != nil {
-		t.Fatalf("apply policy: %v\n%s", err, out)
-	}
 	// HostEndpoint policy (especially applyOnForward + preDNAT, which program the
 	// host forward / mangle-PREROUTING chains) converges noticeably slower than
 	// workload policy — on a freshly provisioned cluster with HEPs, failsafes and
@@ -922,6 +931,11 @@ func runCase(t *testing.T, c *cluster, name, dir string) {
 		settle = cfg.HEPSettleDelay
 	}
 	time.Sleep(settle)
+	if len(hepNodes) > 0 {
+		// Preserve established control-plane flows until Felix has had time to
+		// install the policy, then clear state before measuring connectivity.
+		flushConntrack(ctx, c, hepNodes)
+	}
 
 	// --- Phase 5: engine prediction over the rewritten topology --------------
 	rewrittenTopo, err = engineTopology(req, topoBytes, rw, hepRelocated)
@@ -1078,6 +1092,8 @@ func ensureClusterHealthy(ctx context.Context, t *testing.T, c *cluster, provide
 		return // common path: components already Available, returns near-instantly
 	}
 	t.Logf("Calico not Available within %s — recovering (roll dataplane + control plane, reap leaks)", cfg.HealthGrace)
+	repairLeakedHEPState(ctx, t, c)
+
 	// Dataplane first: one node at a time, keeps Typha/apiserver untouched.
 	if out, err := c.restartCalicoNode(ctx, cfg.HealthRestartTimeout); err != nil {
 		// A rollout that doesn't converge is logged but not fatal here: the

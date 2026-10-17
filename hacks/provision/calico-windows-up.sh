@@ -49,10 +49,10 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-Calico123!}"
 # has it (osinfo-query os | grep win).
 OS_VARIANT="${OS_VARIANT:-detect=on,require=off}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# NOT under ~/.cache: system libvirt runs qemu as libvirt-qemu, which can't
-# traverse ~/.cache (mode 700) to open the disk/ISOs — "Permission denied". A
-# dedicated ~/telepathy-windows we chmod 0755 is reachable ($HOME is 0751/0755).
-CACHE="${CACHE:-$HOME/telepathy-windows}"
+# Keep VM state and cached ISOs inside this checkout by default. The directory
+# is traversable by system libvirt's libvirt-qemu account; ~/.cache often is not.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CACHE="${CACHE:-$REPO_ROOT/.telepathy-windows}"
 WORK="$CACHE/$VM_NAME"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -207,7 +207,8 @@ rm -f "$ANSWER_ISO"
 # --- 6. Boot the VM --------------------------------------------------------
 DISK="$WORK/${VM_NAME}.qcow2"
 virsh destroy "$VM_NAME" 2>/dev/null || true
-virsh undefine "$VM_NAME" --nvram 2>/dev/null || true
+# Leave any legacy libvirt-managed NVRAM untouched; new VM state is kept in WORK.
+virsh undefine "$VM_NAME" 2>/dev/null || true
 rm -f "$DISK"
 qemu-img create -f qcow2 "$DISK" "${VM_DISK_GB}G" >/dev/null
 
@@ -232,7 +233,7 @@ virt-install \
   --network "bridge=$BRIDGE,model=virtio,mtu.size=$MTU" \
   --channel unix,target.type=virtio,target.name=org.qemu.guest_agent.0 \
   --graphics vnc,listen=0.0.0.0 \
-  --boot uefi \
+  --boot "uefi,nvram=$WORK/${VM_NAME}_VARS.fd" \
   --noautoconsole
 
 # Auto-press the firmware's "Press any key to boot from CD or DVD" prompt, which
