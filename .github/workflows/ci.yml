@@ -92,9 +92,8 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install kind
-        uses: helm/kind-action@v1  # renovate: datasource=github-tags depName=helm/kind-action
-        with:
-          install_only: true
+        # Pinned: a kind bump also changes the default node image (k8s version).
+        run: go install sigs.k8s.io/kind@v0.32.0
       - name: Load sctp module (Calico SCTP cases)
         if: matrix.cni == 'calico'
         run: sudo modprobe sctp
