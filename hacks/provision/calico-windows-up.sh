@@ -80,7 +80,7 @@ case "$(stat -c '%A' "$HOME")" in
 esac
 
 # --- 1. Reconfigure Calico for the Windows/HNS dataplane -------------------
-# The Linux default (calico-resources.yaml) is VXLANCrossSubnet + BGP; Windows
+# The Linux default (calico-values.yaml) is VXLANCrossSubnet + BGP; Windows
 # requires plain VXLAN, BGP disabled. These patches are idempotent.
 log "Patching Calico Installation for Windows (VXLAN, no BGP, HNS)"
 kubectl patch installation default --type=json \

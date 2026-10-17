@@ -1,0 +1,24 @@
+# Helm values for the tigera-operator chart, installed by calico-up.sh.
+# Overrides are only where the chart's defaults differ from a plain operator
+# install (Installation + APIServer, nothing else).
+installation:
+  calicoNetwork:
+    ipPools:
+      - blockSize: 26
+        cidr: 192.168.0.0/16
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+  # The chart defaults this to "None", which drops the csi-node-driver DaemonSet;
+  # the operator's own default is the kubelet dir.
+  # kubeletVolumePluginPath: /var/lib/kubelet
+
+apiServer:
+  enabled: true
+
+# The chart enables these by default. They add tigerastatus components that the
+# e2e harness's `tigerastatus --all` wait would then also depend on.
+goldmane:
+  enabled: false
+whisker:
+  enabled: false

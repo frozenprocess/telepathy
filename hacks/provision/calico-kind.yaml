@@ -5,7 +5,7 @@ networking:
   # We install Calico ourselves so policy enforcement actually works.
   # (kind's default kindnet CNI does NOT enforce NetworkPolicy.)
   disableDefaultCNI: true
-  # Must match the Calico IPPool cidr in calico-resources.yaml.
+  # Must match the Calico IPPool cidr in calico-values.yaml.
   podSubnet: "192.168.0.0/16"
 nodes:
   - role: control-plane

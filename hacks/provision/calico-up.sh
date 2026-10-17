@@ -6,12 +6,16 @@
 #   CALICO_VERSION  (default: v3.33.0) — must be ≥ v3.32 for ClusterNetworkPolicy
 #                    (v1alpha2 NPA support landed in v3.32). Kept in step with
 #                    the engine's pinned Calico tree (Makefile CALICO_VERSION).
+#                    Must be a release tag: the Helm charts are release assets.
+#
+# Calico is installed from its Helm charts: projectcalico.org.v3 (CRDs) and
+# tigera-operator (operator + Installation/APIServer, see calico-values.yaml).
 set -euo pipefail
 
 CLUSTER_NAME="${CLUSTER_NAME:-telepathy-e2e}"
 CALICO_VERSION="${CALICO_VERSION:-v3.33.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OPERATOR_URL="https://raw.githubusercontent.com/projectcalico/calico/${CALICO_VERSION}/manifests/tigera-operator.yaml"
+CHART_BASE="https://github.com/projectcalico/calico/releases/download/${CALICO_VERSION}"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
@@ -41,29 +45,26 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/v3_projectcalico_org.yaml
+log "Installing Calico CRDs ($CALICO_VERSION)"
 
-log "Installing Tigera operator ($CALICO_VERSION)"
-# Server-side apply avoids the 'metadata.annotations too long' error and keeps
-# this idempotent across re-runs.
-kubectl apply --server-side --force-conflicts -f "$OPERATOR_URL"
+MAP_API="$(kubectl api-resources --api-group=admissionregistration.k8s.io --no-headers \
+  | awk '$NF == "MutatingAdmissionPolicy" { print $(NF-2) }')"
+helm template calico-crds "$CHART_BASE/projectcalico.org.v3-${CALICO_VERSION}.tgz" \
+  ${MAP_API:+--api-versions "$MAP_API/MutatingAdmissionPolicy"} \
+  | kubectl apply --server-side --force-conflicts -f -
 
-# NOTE: this manifest ships only the operator Deployment + RBAC — NO CRDs.
-# The operator pod installs the operator/Calico CRDs itself once it starts, so
-# we must wait for the operator to be running BEFORE waiting for the CRDs.
-log "Waiting for tigera-operator deployment"
-kubectl -n tigera-operator rollout status deploy/tigera-operator --timeout=180s
-
-log "Waiting for operator CRDs to be installed by the operator"
-# `rollout status` above means the operator pod is Ready, but its first
-# reconcile (which creates these CRDs) may not have run yet — hence the
-# wait_crd_established helper, which retries on NotFound instead of failing.
-wait_crd_established 180 \
+# Helm checks the Installation/APIServer kinds exist before installing.
+wait_crd_established 60 \
   installations.operator.tigera.io \
   apiservers.operator.tigera.io
 
-log "Applying Calico Installation + APIServer config"
-kubectl apply -f "$SCRIPT_DIR/calico-resources.yaml"
+log "Installing Tigera operator + Installation/APIServer via Helm ($CALICO_VERSION)"
+helm upgrade --install calico "$CHART_BASE/tigera-operator-${CALICO_VERSION}.tgz" \
+  --namespace tigera-operator --create-namespace \
+  -f "$SCRIPT_DIR/calico-values.yaml"
+
+log "Waiting for tigera-operator deployment"
+kubectl -n tigera-operator rollout status deploy/tigera-operator --timeout=180s
 
 log "Waiting for calico-system to appear"
 for _ in $(seq 1 60); do
